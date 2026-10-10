@@ -62,6 +62,11 @@ data class FormField(
     @SerialName("ask_phrase") val askPhrase: String? = null,
     /** Never combine this field with others (safety-critical or needs a focused answer). */
     @SerialName("ask_alone") val askAlone: Boolean = false,
+    /**
+     * Free-text guidance from the form author about what goes in the field (an HTML form's
+     * `placeholder` / `aria-describedby` text). Shown to the extraction model, never asked.
+     */
+    val hint: String? = null,
 ) {
     /**
      * Every surface form that can indicate this field in speech: the id, the label,
@@ -78,7 +83,8 @@ data class FormField(
 @Serializable
 data class QuestionGroup(
     val id: String,
-    val prompt: String,
+    /** Spoken question for the whole group; null → built from the members' labels. */
+    val prompt: String? = null,
     val fields: List<String> = emptyList(),
 )
 

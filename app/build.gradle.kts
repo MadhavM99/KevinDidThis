@@ -59,6 +59,8 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
+    // Reads HTML form pages into the form schema (form/HtmlFormParser.kt).
+    implementation("org.jsoup:jsoup:1.18.1")
     // Qualcomm GenieX: on-device Gemma 4 E2B (GGUF, llama.cpp runtime, Hexagon v75/Adreno/CPU).
     // See docs/LLM.md for why this runtime and not a Genie/QAIRT bundle.
     implementation("com.qualcomm.qti:geniex-android:0.7.1")

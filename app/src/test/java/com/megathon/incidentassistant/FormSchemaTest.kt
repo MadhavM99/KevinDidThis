@@ -75,8 +75,8 @@ class FormSchemaTest {
         assumeTrue("fixture not found (test working dir is not the app module)", file.exists())
         val schema = FormSchemaParser.parse(file.readText())
         assertEquals("incident_report", schema.id)
-        assertEquals(12, schema.fields.size)
-        assertEquals(7, schema.requiredFields.size)
+        assertEquals(11, schema.fields.size) // reported_by moved out (now filled from the user's profile)
+        assertEquals(6, schema.requiredFields.size)
         assertEquals("open", schema.field("action_status")?.defaultValue)
         assertEquals(2, schema.questionGroups.size)
     }

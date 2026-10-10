@@ -35,6 +35,12 @@ object AppConfig {
     const val SERVER_BASE_URL = ""
 
     const val DEFAULT_FORM_ID = "incident_report"
+
+    /**
+     * A published form page (any ordinary HTML `<form>`) to build the conversation from.
+     * Blank: the bundled sample `assets/forms/incident_report.html` is used.
+     */
+    const val FORM_URL = ""
 }
 
 /**
@@ -72,7 +78,7 @@ class AppContainer(context: Context) {
 
     /** Bundled sample by default; the server (when configured) replaces it. */
     val formSource: FormSource =
-        HttpFormSource(AppConfig.SERVER_BASE_URL, BundledFormSource(appContext))
+        HttpFormSource(AppConfig.SERVER_BASE_URL, BundledFormSource(appContext), AppConfig.FORM_URL)
 
     val reportSubmitter: ReportSubmitter = HttpReportSubmitter(AppConfig.SERVER_BASE_URL)
 }

@@ -19,12 +19,16 @@ import com.megathon.incidentassistant.form.FieldType
 import com.megathon.incidentassistant.form.FieldValue
 import com.megathon.incidentassistant.form.FormField
 import com.megathon.incidentassistant.form.FormSchema
+import com.megathon.incidentassistant.data.LocalProfileStore
 import com.megathon.incidentassistant.data.ManagedConfigIdentityProvider
+import com.megathon.incidentassistant.data.ProfileIdentityProvider
+import com.megathon.incidentassistant.data.UserProfile
 import com.megathon.incidentassistant.session.ExtractionEngine
 import com.megathon.incidentassistant.session.IdentityProvider
 import com.megathon.incidentassistant.session.IncidentSession
 import com.megathon.incidentassistant.session.ListenAfterReply
 import com.megathon.incidentassistant.session.ReplyKind
+import com.megathon.incidentassistant.session.ReporterFieldClassifier
 import com.megathon.incidentassistant.session.SessionPhase
 import com.megathon.incidentassistant.session.SessionReply
 import kotlinx.coroutines.CancellationException
@@ -71,6 +75,10 @@ data class UiState(
     val asrStatus: String = "",
     val asrReady: Boolean = false,
     val asrFailed: Boolean = false,
+    /** The user's own details (first-launch profile); fills the form's reporter fields. */
+    val profile: UserProfile? = null,
+    /** Show the "your details" screen: on first launch, or when the user edits them. */
+    val editingProfile: Boolean = false,
 ) {
     fun field(fieldId: String): FormField? = schema.field(fieldId)
 
@@ -104,14 +112,24 @@ class IncidentViewModel(
     private val container: AppContainer,
 ) : ViewModel() {
 
-    private val _ui = MutableStateFlow(UiState(status = appContext.getString(R.string.status_loading_form)))
+    private val _ui = MutableStateFlow(
+        UiState(status = appContext.getString(R.string.status_loading_form)),
+    )
     val ui: StateFlow<UiState> = _ui.asStateFlow()
 
     private var schema: FormSchema = FormSchema(id = "")
     private val phrases = ResourcePhrases(appContext)
     private val extraction = ExtractionEngine(container.llm, now = { ZonedDateTime.now().toString() })
-    /** Signed-in reporter from device management; read per draft so a change applies to the next report. */
-    private val identity: IdentityProvider = ManagedConfigIdentityProvider(appContext)
+    /**
+     * The reporter: the profile entered on this device on first launch, else device
+     * management. Read per draft so an edit applies to the next report.
+     */
+    private val profiles = LocalProfileStore(appContext)
+    private val identity: IdentityProvider =
+        ProfileIdentityProvider(profiles, ManagedConfigIdentityProvider(appContext))
+
+    /** Finds the form's own-name / email / phone fields (model-assisted, once per form). */
+    private val reporterFields = ReporterFieldClassifier(container.llm, log = { Log.i(TAG, it) })
     private var session: IncidentSession = newSession(schema)
 
     /** Watches the ASR backend's end-of-speech signal (VAD closed the utterance). */
@@ -139,6 +157,9 @@ class IncidentViewModel(
     )
 
     init {
+        // First launch: ask for the user's own details before the first report.
+        val profile = profiles.load()
+        _ui.update { it.copy(profile = profile, editingProfile = identity.currentUser() == null) }
         viewModelScope.launch {
             // Order matters on the shared CDSP process (verified on the QIDK, see docs/TTS.md):
             //  1. TTS: MeloTTS init() asks for a 128 KB DSP thread stack; its own DSP thread
@@ -191,11 +212,14 @@ class IncidentViewModel(
 
     private suspend fun loadForm() {
         _ui.update { it.copy(loadingForm = true, status = str(R.string.status_loading_form)) }
-        val loaded = runCatching { container.formSource.fetchForm(AppConfig.DEFAULT_FORM_ID) }.getOrNull()
-        if (loaded == null) {
+        val fetched = runCatching { container.formSource.fetchForm(AppConfig.DEFAULT_FORM_ID) }.getOrNull()
+        if (fetched == null) {
             _ui.update { it.copy(loadingForm = false, status = str(R.string.status_form_error)) }
             return
         }
+        // Which fields are the reporter's own details: filled from the profile, never asked.
+        _ui.update { it.copy(status = str(R.string.status_reading_form)) }
+        val loaded = reporterFields.classify(fetched)
         schema = loaded
         session = newSession(loaded)
         _ui.update {
@@ -228,6 +252,7 @@ class IncidentViewModel(
     private fun maybeStartPendingAutoListen() {
         if (!pendingAutoListen) return
         if (_ui.value.loadingForm) return // retried when the form finishes loading
+        if (_ui.value.editingProfile) return // retried when the profile is saved
         pendingAutoListen = false
         val state = _ui.value
         if (state.step == Step.CAPTURE && !state.processing && !state.listening) {
@@ -245,6 +270,35 @@ class IncidentViewModel(
     // ---------- Recorder flow: Start / Stop / Re-record / Continue ----------
 
     /** Called when the mic-permission dialog was granted (from Start or the widget). */
+    // ---------- the user's own details ----------
+
+    /**
+     * Saves the profile (name required). A report that has not started yet is re-created so
+     * its reporter fields pick the details up; a conversation in progress is left alone.
+     */
+    fun onSaveProfile(name: String, email: String, phone: String) {
+        if (name.isBlank()) return
+        val profile = UserProfile(name.trim(), email.trim(), phone.trim())
+        profiles.save(profile)
+        val untouched = session.form.entries().keys.all(session.form::isAppProvided)
+        if (untouched && schema.fields.isNotEmpty()) session = newSession(schema)
+        _ui.update {
+            it.copy(profile = profile, editingProfile = false, values = session.form.entries())
+        }
+        maybeStartPendingAutoListen()
+    }
+
+    fun onEditProfile() {
+        if (_ui.value.listening || _ui.value.processing) return
+        _ui.update { it.copy(editingProfile = true) }
+    }
+
+    /** Back out of editing; on first launch there is nothing to go back to. */
+    fun onCancelProfileEdit() {
+        if (_ui.value.profile == null) return
+        _ui.update { it.copy(editingProfile = false) }
+    }
+
     fun onMicPermissionGranted() = onStartRecording()
 
     fun onMicPermissionDenied() = setStatus(R.string.status_mic_denied, speak = true)
@@ -252,7 +306,9 @@ class IncidentViewModel(
     /** Start capturing: live captions stream into `partial` until Stop or VAD close. */
     fun onStartRecording() {
         val state = _ui.value
-        if (state.processing || state.listening || state.loadingForm || schema.fields.isEmpty()) return
+        if (state.processing || state.listening || state.loadingForm || state.editingProfile ||
+            schema.fields.isEmpty()
+        ) return
         handsFree.cancel() // a tap while a reopen is pending must not start a second recording
         turnId += 1
         turnLog("MICROPHONE_START")

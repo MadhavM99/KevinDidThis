@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Incident Report</title>
+</head>
+<body>
+  <!--
+    A plain HTML form: this is all the app knows about the report. Mandatory fields carry
+    `required`; choices are <select>/radio options; `title` is how a field is asked aloud and
+    `placeholder` / aria-describedby hint at what goes in it. Nothing marks which fields are
+    the reporter's own details: the on-device model works that out when the form loads, and
+    they are filled from the user's profile instead of asked. In production this page is
+    served from a URL (AppConfig.FORM_URL) instead of being bundled.
+  -->
+  <h1>Incident Report</h1>
+  <form id="incident_report" data-version="1.0" action="/api/v1/reports" method="post">
+
+    <label for="incident_type">Incident type</label>
+    <select id="incident_type" name="incident_type" required title="What kind of incident is it?">
+      <option value="">Select…</option>
+      <option value="water_leak">Water leak</option>
+      <option value="fire">Fire</option>
+      <option value="electrical">Electrical</option>
+      <option value="chemical_spill">Chemical spill</option>
+      <option value="equipment_failure">Equipment failure</option>
+      <option value="slip_trip_fall">Slip / trip / fall</option>
+      <option value="security">Security</option>
+      <option value="medical">Medical</option>
+      <option value="other">Other</option>
+    </select>
+
+    <fieldset>
+      <legend>Severity</legend>
+      <label><input type="radio" name="severity" value="low" required title="How severe is it — low, medium, high, or critical?"> Low</label>
+      <label><input type="radio" name="severity" value="medium"> Medium</label>
+      <label><input type="radio" name="severity" value="high"> High</label>
+      <label><input type="radio" name="severity" value="critical"> Critical</label>
+    </fieldset>
+
+    <label for="location">Location</label>
+    <input id="location" name="location" type="text" required
+           title="Where did it happen?" placeholder="Building, floor, room or area">
+
+    <label for="occurred_at">Date &amp; time</label>
+    <input id="occurred_at" name="occurred_at" type="datetime-local" required
+           title="When did it happen, even approximately?">
+
+    <label for="description">Description</label>
+    <textarea id="description" name="description" required
+              title="Describe what happened, step by step if you can."></textarea>
+
+    <label for="immediate_actions">Immediate actions taken</label>
+    <textarea id="immediate_actions" name="immediate_actions" required
+              title="What has been done so far to handle it?"
+              aria-describedby="immediate_actions_help"></textarea>
+    <small id="immediate_actions_help">For example: area isolated, first aid given, supervisor notified.</small>
+
+
+    <fieldset id="people">
+      <legend>People</legend>
+      <label for="persons_involved">Persons involved</label>
+      <input id="persons_involved" name="persons_involved" type="text" multiple>
+      <label for="witnesses">Witnesses</label>
+      <input id="witnesses" name="witnesses" type="text" multiple>
+    </fieldset>
+
+    <fieldset id="followup">
+      <legend>Follow-up</legend>
+      <label for="equipment_involved">Equipment or asset involved</label>
+      <input id="equipment_involved" name="equipment_involved" type="text" multiple>
+      <label for="recommended_actions">Recommended follow-up</label>
+      <textarea id="recommended_actions" name="recommended_actions"></textarea>
+      <label for="action_status">Current action status</label>
+      <select id="action_status" name="action_status">
+        <option value="open" selected>Open</option>
+        <option value="in_progress">In progress</option>
+        <option value="monitoring">Monitoring</option>
+        <option value="resolved">Resolved</option>
+      </select>
+    </fieldset>
+
+    <fieldset id="submitted_by">
+      <legend>Submitted by</legend>
+      <label for="reported_by">Reported by</label>
+      <input id="reported_by" name="reported_by" type="text" required>
+      <label for="reporter_email">Your email</label>
+      <input id="reporter_email" name="reporter_email" type="email">
+    </fieldset>
+
+    <button type="submit">Submit report</button>
+  </form>
+</body>
+</html>

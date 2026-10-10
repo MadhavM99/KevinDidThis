@@ -37,6 +37,7 @@ import com.megathon.incidentassistant.ui.DoneScreen
 import com.megathon.incidentassistant.ui.IncidentTheme
 import com.megathon.incidentassistant.ui.IncidentViewModel
 import com.megathon.incidentassistant.ui.IncidentViewModelFactory
+import com.megathon.incidentassistant.ui.ProfileScreen
 import com.megathon.incidentassistant.ui.ReviewScreen
 import com.megathon.incidentassistant.ui.Step
 
@@ -97,7 +98,7 @@ fun IncidentAssistantRoot(vm: IncidentViewModel) {
 
     // The capture step is the immersive assistant stage (no chrome);
     // Review / Submitted keep the usual app bar + step header.
-    val immersive = state.step == Step.CAPTURE
+    val immersive = state.step == Step.CAPTURE && !state.editingProfile
 
     Scaffold(
         containerColor = if (immersive) Color.Transparent else MaterialTheme.colorScheme.surface,
@@ -119,7 +120,10 @@ fun IncidentAssistantRoot(vm: IncidentViewModel) {
         },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
-            if (immersive) {
+            if (state.editingProfile) {
+                // First launch (or "Edit"): the user's own details, before any report.
+                ProfileScreen(state, vm)
+            } else if (immersive) {
                 CaptureScreen(state, vm, onStartRecording)
             } else {
                 val stepText = stringResource(

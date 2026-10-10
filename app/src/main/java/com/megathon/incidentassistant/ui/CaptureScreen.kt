@@ -550,6 +550,14 @@ private fun SecondaryControls(state: UiState, vm: IncidentViewModel) {
 
         SpeakPromptsRow(state.speakPrompts, vm::onSpeakPromptsChanged)
 
+        state.profile?.let { profile ->
+            TextButton(
+                onClick = vm::onEditProfile,
+                enabled = !state.processing && !state.listening,
+                modifier = Modifier.heightIn(min = MinTouch),
+            ) { Text(stringResource(R.string.profile_edit, profile.name)) }
+        }
+
         TextButton(
             onClick = vm::onRefreshForm,
             enabled = !state.processing && !state.listening && !state.loadingForm,

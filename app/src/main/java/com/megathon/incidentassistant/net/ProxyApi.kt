@@ -2,7 +2,7 @@ package com.megathon.incidentassistant.net
 
 import android.content.Context
 import com.megathon.incidentassistant.form.FormSchema
-import com.megathon.incidentassistant.form.FormSchemaParser
+import com.megathon.incidentassistant.form.FormDocuments
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -12,7 +12,7 @@ import java.net.URL
 /**
  * Form + report server client (contract: docs/PROXY_API.md).
  *
- *   GET  {base}/api/v1/forms/{id}   → dynamic form definition (JSON)
+ *   GET  {base}/api/v1/forms/{id}   → dynamic form definition (an HTML form page, or JSON)
  *   POST {base}/api/v1/reports      → finished report JSON
  *
  * The server is **optional**. The app ships a sample form (assets/forms) that auto-loads
@@ -26,16 +26,20 @@ interface FormSource {
     suspend fun fetchForm(formId: String): FormSchema
 }
 
-/** Sample form shipped with the app (`assets/forms/{formId}.json`). */
+/**
+ * Sample form shipped with the app: `assets/forms/{formId}.html` (an ordinary HTML form,
+ * parsed by [com.megathon.incidentassistant.form.HtmlFormParser]), else `{formId}.json`.
+ */
 class BundledFormSource(
     private val context: Context,
     private val assetFolder: String = "forms",
 ) : FormSource {
     override suspend fun fetchForm(formId: String): FormSchema = withContext(Dispatchers.IO) {
-        val text = context.assets.open("$assetFolder/$formId.json")
-            .bufferedReader()
-            .use { it.readText() }
-        FormSchemaParser.parse(text)
+        val available = context.assets.list(assetFolder).orEmpty()
+        val file = listOf("$formId.html", "$formId.json").firstOrNull { it in available }
+            ?: throw IOException("no bundled form $formId in assets/$assetFolder")
+        val text = context.assets.open("$assetFolder/$file").bufferedReader().use { it.readText() }
+        FormDocuments.parse(text, formId)
     }
 }
 
@@ -47,11 +51,17 @@ class BundledFormSource(
 class HttpFormSource(
     private val baseUrl: String,
     private val fallback: FormSource,
+    /** A form page to load directly (e.g. the published HTML form); wins over [baseUrl]. */
+    private val formUrl: String = "",
 ) : FormSource {
     override suspend fun fetchForm(formId: String): FormSchema = withContext(Dispatchers.IO) {
-        if (baseUrl.isBlank()) return@withContext fallback.fetchForm(formId)
+        val url = when {
+            formUrl.isNotBlank() -> formUrl
+            baseUrl.isNotBlank() -> "${baseUrl.trimEnd('/')}/api/v1/forms/$formId"
+            else -> return@withContext fallback.fetchForm(formId)
+        }
         runCatching {
-            FormSchemaParser.parse(httpGet("${baseUrl.trimEnd('/')}/api/v1/forms/$formId"))
+            FormDocuments.parse(httpGet(url), formId)
         }.getOrElse {
             fallback.fetchForm(formId)
         }
@@ -62,7 +72,7 @@ class HttpFormSource(
             requestMethod = "GET"
             connectTimeout = 3000
             readTimeout = 5000
-            setRequestProperty("Accept", "application/json")
+            setRequestProperty("Accept", "text/html, application/json")
         }
         val code = connection.responseCode
         if (code !in 200..299) {

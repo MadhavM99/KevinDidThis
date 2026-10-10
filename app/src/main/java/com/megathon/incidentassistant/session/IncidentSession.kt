@@ -95,8 +95,9 @@ class IncidentSession(
         // App-provided context, validated against the schema like any value: the reporter is
         // never asked when the app already knows them (and never guessed when it does not).
         if (reporter != null) {
-            schema.fields.filter { it.prefill == PREFILL_REPORTER }.forEach { field ->
-                form.prefill(field.id, reporter.displayName, evidence = "signed-in user (${reporter.source})")
+            schema.fields.forEach { field ->
+                val value = field.prefill?.let(reporter::valueFor) ?: return@forEach
+                form.prefill(field.id, value, evidence = "signed-in user (${reporter.source})")
             }
         }
     }

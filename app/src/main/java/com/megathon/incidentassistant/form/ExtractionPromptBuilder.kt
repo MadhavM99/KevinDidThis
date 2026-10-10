@@ -37,6 +37,7 @@ object ExtractionPromptBuilder {
             if (field.required) parts += "REQUIRED"
             if (field.options.isNotEmpty()) parts += "options=" + field.options.joinToString(" / ") { describeOption(it) }
             if (field.keywords.isNotEmpty()) parts += "keywords=" + field.keywords.joinToString(",")
+            field.hint?.takeIf { it.isNotBlank() }?.let { parts += "hint=\"$it\"" }
             field.question?.takeIf { it.isNotBlank() }?.let { parts += "asked as \"$it\"" }
             appendLine("  - " + parts.joinToString(" | "))
         }

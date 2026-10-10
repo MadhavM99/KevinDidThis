@@ -4,6 +4,8 @@ import com.megathon.incidentassistant.form.ExtractionPromptBuilder
 import com.megathon.incidentassistant.form.FieldStatus
 import com.megathon.incidentassistant.form.FormSchema
 import com.megathon.incidentassistant.form.FormSchemaParser
+import com.megathon.incidentassistant.form.HtmlFormParser
+import com.megathon.incidentassistant.session.ReporterFieldClassifier
 import com.megathon.incidentassistant.form.UpdateStatus
 import com.megathon.incidentassistant.session.ExtractionEngine
 import com.megathon.incidentassistant.session.IncidentSession
@@ -19,12 +21,14 @@ import java.io.File
 /** Reporter prefill from a trusted identity, and combined questions for missing fields. */
 class ReporterAndCombinedQuestionsTest {
 
-    /** The form the app ships (assets), which has a `prefill: reporter` field. */
-    private val appForm: FormSchema = FormSchemaParser.parse(
-        listOf(File("src/main/assets/forms/incident_report.json"), File("app/src/main/assets/forms/incident_report.json"))
+    /** The form the app ships (an HTML page in assets), with the reporter field found at load. */
+    private val appForm: FormSchema = runBlocking {
+        val html = listOf(File("src/main/assets/forms/incident_report.html"), File("app/src/main/assets/forms/incident_report.html"))
             .first { it.exists() }
             .readText()
-    )
+        ReporterFieldClassifier(ScriptedLlm.of("""{"name":"reported_by","email":null,"phone":null}"""))
+            .classify(HtmlFormParser.parse(html))
+    }
     private val alice = UserIdentity("Alice Rao", source = "device management profile")
     private val severityQuestion = "How severe is it — low, medium, high, or critical?"
 
@@ -86,14 +90,13 @@ class ReporterAndCombinedQuestionsTest {
     fun noTrustedIdentityMeansNothingIsAssumedAndTheFieldIsAsked() = runBlocking {
         val s = session(ScriptedLlm.of(leakNearRoom2), reporter = null)
         assertEquals(FieldStatus.EMPTY, s.form.get("reported_by").status)
-        // reported_by comes first in the schema and takes an open answer, so it is asked —
-        // together with the other open fields still missing (severity, an enum, waits).
+        // Without a profile nothing is assumed: reported_by stays a normal required field and
+        // is asked in its turn (last on this form) — the app shows the profile screen first,
+        // so this only happens on devices without one.
         val reply = s.onUtterance("There was a water leak near Conference Room 2.")
-        assertEquals(
-            "TELL ME: who is reporting it | when it happened, even approximately | what has been done so far to handle it?",
-            reply.speech,
-        )
-        assertEquals(listOf("reported_by", "occurred_at", "immediate_actions"), reply.pendingFieldIds)
+        assertEquals(severityQuestion, reply.speech)
+        assertEquals(FieldStatus.EMPTY, s.form.get("reported_by").status)
+        assertTrue("reported_by" in s.form.missingRequired().map { it.id })
     }
 
     @Test
@@ -108,7 +111,7 @@ class ReporterAndCombinedQuestionsTest {
     fun threeMissingOpenFieldsShareOneQuestion() = runBlocking {
         val s = session(ScriptedLlm.of(recordFields(U("incident_type", "fire"), U("severity", "high"))))
         val reply = s.onUtterance("A serious fire")
-        assertEquals("TELL ME: where it happened | when it happened, even approximately | what happened?", reply.speech)
+        assertEquals("TELL ME: the location | the date & time | the description?", reply.speech)
         assertEquals(listOf("location", "occurred_at", "description"), reply.pendingFieldIds)
     }
 
@@ -127,7 +130,7 @@ class ReporterAndCombinedQuestionsTest {
         // Severity (closed answer) was asked alone; the open fields come together.
         val together = s.onUtterance("Medium")
         assertEquals(
-            "TELL ME: when it happened, even approximately | what has been done so far to handle it?",
+            "TELL ME: the date & time | the immediate actions taken?",
             together.speech,
         )
 
@@ -151,7 +154,7 @@ class ReporterAndCombinedQuestionsTest {
         s.onUtterance("A serious fire")
         val reply = s.onUtterance("In Lab 3 at nine")
         // Not a failed answer: no "sorry, I didn't catch that", just the remaining fields.
-        assertEquals("TELL ME: what happened | what has been done so far to handle it?", reply.speech)
+        assertEquals("TELL ME: the description | the immediate actions taken?", reply.speech)
         assertFalse(reply.speech.contains("where it happened"))
     }
 
