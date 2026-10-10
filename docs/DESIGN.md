@@ -240,17 +240,20 @@ the fixtures in `tools/forms/`.
   the assistant keeps asking until every required field is filled (or explicitly marked
   "not specified" after an audible confirmation), so a report is always submittable.
 
-### 3.5 Form source (server-only)
+### 3.5 Form source (bundled sample default — server optional)
 
-- The app ships **no form definitions**. The only source is
-  `GET {server}/api/v1/forms/{form_id}` (contract: `docs/PROXY_API.md`), fetched at every
-  app start and when the user taps **Refresh form**.
-- **No local fallback**: if the fetch fails the app shows an error and waits for a retry —
-  the form on screen is always the one the server sent. Nothing hardcoded, ever.
+- The app ships a **sample form** (`assets/forms/incident_report.json`, 12 fields) that
+  auto-loads with zero configuration: opening the app works fully offline.
+- When `AppConfig.SERVER_BASE_URL` is set, the app fetches
+  `GET {server}/api/v1/forms/{form_id}` (contract: `docs/PROXY_API.md`) at start and on
+  **Refresh form**, preferring the server definition; if the server is unreachable the
+  sample form is used instead.
+- The pipeline is identical either way: any JSON with the §3.1 shape drives prompts,
+  validation and the form UI — nothing form-specific is compiled in, and the sample is
+  just data, swappable like any other definition.
 - Admins manage definitions on the server; the app only reads them. A refresh — or the
   next app start — picks up changes and starts a fresh draft.
-- Any JSON with the §3.1 shape works — publishing a new form needs **zero app changes**.
-- Dev fixtures live in `tools/forms/` and are served by `tools/mock_proxy.py`.
+- Dev fixtures for the stand-in server live in `tools/forms/`.
 
 ---
 
@@ -594,6 +597,7 @@ KevinDidThis/                                  single Android Studio project
 │   └── src/
 │       ├── main/
 │       │   ├── AndroidManifest.xml            (RECORD_AUDIO + INTERNET for the server)
+│       │   ├── assets/forms/incident_report.json    ← sample form, bundled default (§3.5)
 │       │   └── java/com/megathon/incidentassistant/
 │       │       ├── AppContainer.kt            manual DI + AppConfig (proxy URL, placeholder switch)
 │       │       ├── MainActivity.kt            Compose host, 3-step navigation
@@ -903,8 +907,9 @@ adb push $QAIRT/lib/aarch64-android/*      /data/local/tmp/genie_bundle/
   `keywords`, questions, groups), fetched/updatable via the proxy API; the LLM prompt
   is generated from the form, so models and use-cases are swappable without app edits.
   XML is not needed now (a parser swap later if it ever is).
-- **Form sourcing**: server-only — the app bundles no form definitions and no hardcoded
-  keywords; fixtures live in `tools/forms/` and are served by the mock (§3.5).
+- **Form sourcing**: a bundled **sample form** auto-loads (fully offline demo, no server
+  needed); when `SERVER_BASE_URL` is configured the server definition is used instead
+  (unreachable → sample). Prompts/validation stay fully schema-driven either way (§3.5).
 
 ---
 

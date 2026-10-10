@@ -1,5 +1,6 @@
 package com.megathon.incidentassistant.net
 
+import android.content.Context
 import com.megathon.incidentassistant.form.FormSchema
 import com.megathon.incidentassistant.form.FormSchemaParser
 import kotlinx.coroutines.Dispatchers
@@ -9,26 +10,51 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Server API client (contract: docs/PROXY_API.md).
+ * Form + report server client (contract: docs/PROXY_API.md).
  *
  *   GET  {base}/api/v1/forms/{id}   → dynamic form definition (JSON)
  *   POST {base}/api/v1/reports      → finished report JSON
  *
- * The app is a pure client and ships **no form definitions**: the server is the only
- * source of forms, fetched at start/refresh; a failed fetch surfaces an error for the
- * user to retry. The AI pipeline stays on-device. `tools/mock_proxy.py` plays the
- * server's role during development (fixtures in `tools/forms/`).
+ * The server is **optional**. The app ships a sample form (assets/forms) that auto-loads
+ * with zero configuration, so opening the app works fully offline. When
+ * [AppConfig.SERVER_BASE_URL] is set, the server definition is fetched at start / Refresh
+ * and the finished report is POSTed back to it; if the server is unreachable, the sample
+ * form is used instead. The AI pipeline stays on-device.
  */
 interface FormSource {
-    /** Fetches the form definition. Throws when the server is unreachable or the payload invalid. */
+    /** Fetches the form definition. Throws when nothing is available. */
     suspend fun fetchForm(formId: String): FormSchema
 }
 
-/** Fetches definitions over HTTP from [baseUrl]. No local fallback by design (§3.5). */
-class HttpFormSource(private val baseUrl: String) : FormSource {
+/** Sample form shipped with the app (`assets/forms/{formId}.json`). */
+class BundledFormSource(
+    private val context: Context,
+    private val assetFolder: String = "forms",
+) : FormSource {
     override suspend fun fetchForm(formId: String): FormSchema = withContext(Dispatchers.IO) {
-        val text = httpGet("${baseUrl.trimEnd('/')}/api/v1/forms/$formId")
+        val text = context.assets.open("$assetFolder/$formId.json")
+            .bufferedReader()
+            .use { it.readText() }
         FormSchemaParser.parse(text)
+    }
+}
+
+/**
+ * Server path (optional). With a blank [baseUrl] this simply serves the bundled sample;
+ * with a URL it fetches the definition from the server and falls back to the bundled
+ * sample when the server is unreachable.
+ */
+class HttpFormSource(
+    private val baseUrl: String,
+    private val fallback: FormSource,
+) : FormSource {
+    override suspend fun fetchForm(formId: String): FormSchema = withContext(Dispatchers.IO) {
+        if (baseUrl.isBlank()) return@withContext fallback.fetchForm(formId)
+        runCatching {
+            FormSchemaParser.parse(httpGet("${baseUrl.trimEnd('/')}/api/v1/forms/$formId"))
+        }.getOrElse {
+            fallback.fetchForm(formId)
+        }
     }
 
     private fun httpGet(url: String): String {
@@ -57,7 +83,7 @@ interface ReportSubmitter {
     suspend fun submit(reportJson: String, reportId: String): SubmitResult
 }
 
-/** POSTs the report with an idempotency key so retries never duplicate a report. */
+/** POSTs the report (with an idempotency key) to the configured server, if any. */
 class HttpReportSubmitter(private val baseUrl: String) : ReportSubmitter {
     override suspend fun submit(reportJson: String, reportId: String): SubmitResult =
         withContext(Dispatchers.IO) {

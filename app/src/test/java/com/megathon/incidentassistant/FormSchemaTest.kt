@@ -57,11 +57,12 @@ class FormSchemaTest {
     }
 
     /**
-     * Form fixtures live outside the app (tools/forms) and are served by the mock
-     * server — the app itself ships no form definitions.
+     * The sample form ships with the app (assets/forms); mock fixtures live in
+     * tools/forms/ for the stand-in server.
      */
     private fun fixture(name: String): File {
         val candidates = listOf(
+            File("src/main/assets/forms/$name"),
             File("../../tools/forms/$name"),
             File("../tools/forms/$name"),
         )
@@ -74,8 +75,8 @@ class FormSchemaTest {
         assumeTrue("fixture not found (test working dir is not the app module)", file.exists())
         val schema = FormSchemaParser.parse(file.readText())
         assertEquals("incident_report", schema.id)
-        assertEquals(11, schema.fields.size)
-        assertEquals(6, schema.requiredFields.size)
+        assertEquals(12, schema.fields.size)
+        assertEquals(7, schema.requiredFields.size)
         assertEquals("open", schema.field("action_status")?.defaultValue)
         assertEquals(2, schema.questionGroups.size)
     }
