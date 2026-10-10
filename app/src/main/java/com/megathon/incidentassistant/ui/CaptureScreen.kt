@@ -7,6 +7,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -44,20 +46,20 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -66,8 +68,14 @@ import com.megathon.incidentassistant.R
 
 private val MinTouch = 56.dp // above the 48dp Android minimum
 
+/**
+ * Recorder-style capture: Start → speak (live ASR caption) → Stop (or VAD close) →
+ * review + fix the transcript → Continue. The ASR text is always visible and editable
+ * before it reaches the LLM, so speech-recognition mistakes get caught here, not in the
+ * report. Typing remains as a no-mic fallback.
+ */
 @Composable
-fun CaptureScreen(state: UiState, vm: IncidentViewModel, onMic: () -> Unit) {
+fun CaptureScreen(state: UiState, vm: IncidentViewModel, onStartRecording: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -81,11 +89,11 @@ fun CaptureScreen(state: UiState, vm: IncidentViewModel, onMic: () -> Unit) {
 
         state.followUpQuestion?.let { FollowUpCard(it, vm) }
 
-        MicButton(listening = state.listening, busy = state.processing, onClick = onMic)
+        RecorderCard(state, vm, onStartRecording)
 
-        TranscriptCard(state)
-
-        TypedInput(state, vm)
+        if (!state.listening && !state.transcriptReady) {
+            TypedInput(state, vm)
+        }
 
         SpeakPromptsRow(state.speakPrompts, vm::onSpeakPromptsChanged)
 
@@ -110,6 +118,163 @@ fun CaptureScreen(state: UiState, vm: IncidentViewModel, onMic: () -> Unit) {
                 )
             }
         }
+    }
+}
+
+/** One of: recording (live caption + Stop) · reviewing transcript · idle (Start). */
+@Composable
+private fun RecorderCard(state: UiState, vm: IncidentViewModel, onStartRecording: () -> Unit) {
+    when {
+        state.listening -> ListeningSection(state, vm)
+        state.processing -> WorkingSection()
+        state.transcriptReady -> TranscriptReviewSection(state, vm)
+        else -> StartSection(state, onStartRecording)
+    }
+}
+
+// ---------- recording ----------
+
+@Composable
+private fun ListeningSection(state: UiState, vm: IncidentViewModel) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        ),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                stringResource(R.string.rec_listening),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.semantics { heading() },
+            )
+            // Live ASR output: the user sees the text being recognised, in real time.
+            Text(
+                text = state.partial.ifBlank { stringResource(R.string.rec_hear_hint) },
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            )
+            Button(
+                onClick = vm::onStopRecording,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    contentColor = MaterialTheme.colorScheme.onError,
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = MinTouch),
+            ) {
+                Icon(Icons.Filled.Stop, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.rec_stop))
+            }
+        }
+    }
+}
+
+// ---------- transcript review (fix ASR errors before the LLM sees them) ----------
+
+@Composable
+private fun TranscriptReviewSection(state: UiState, vm: IncidentViewModel) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+                stringResource(R.string.rec_transcript_label),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.semantics { heading() },
+            )
+            OutlinedTextField(
+                value = state.transcript,
+                onValueChange = vm::onTranscriptChange,
+                label = { Text(stringResource(R.string.rec_transcript_label)) },
+                supportingText = { Text(stringResource(R.string.rec_transcript_hint)) },
+                minLines = 4,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (state.transcript.isBlank()) {
+                Text(
+                    stringResource(R.string.rec_empty),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = vm::onReRecord,
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = MinTouch),
+                ) {
+                    Icon(Icons.Filled.Replay, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.rec_rerecord))
+                }
+                Button(
+                    onClick = vm::onUseTranscript,
+                    enabled = state.transcript.isNotBlank(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = MinTouch),
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.rec_continue))
+                }
+            }
+        }
+    }
+}
+
+// ---------- idle (Start) / busy (working) ----------
+
+@Composable
+private fun StartSection(state: UiState, onStartRecording: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Button(
+            onClick = onStartRecording,
+            enabled = !state.loadingForm && !state.processing && state.schema.fields.isNotEmpty(),
+            shape = CircleShape,
+            contentPadding = PaddingValues(0.dp),
+            modifier = Modifier
+                .size(136.dp)
+                .semantics { stateDescription = stringResource(R.string.mic_state_idle) },
+        ) {
+            Icon(
+                Icons.Filled.Mic,
+                contentDescription = null, // the label below says it
+                modifier = Modifier.size(64.dp),
+            )
+        }
+        Text(
+            stringResource(R.string.rec_start),
+            style = MaterialTheme.typography.titleMedium,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+@Composable
+private fun WorkingSection() {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Button(
+            onClick = {},
+            enabled = false,
+            shape = CircleShape,
+            contentPadding = PaddingValues(0.dp),
+            modifier = Modifier.size(136.dp),
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clearAndSetSemantics { }, // status text already announces progress
+            )
+        }
+        Text(
+            stringResource(R.string.mic_busy_label),
+            style = MaterialTheme.typography.titleMedium,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
@@ -141,97 +306,11 @@ private fun StatusText(status: String, active: Boolean) {
                     .clip(CircleShape)
                     .background(
                         if (active) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.primary,
                     ),
             )
             Spacer(Modifier.width(10.dp))
             Text(status, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
-        }
-    }
-}
-
-@Composable
-private fun MicButton(listening: Boolean, busy: Boolean, onClick: () -> Unit) {
-    val desc = stringResource(if (listening) R.string.mic_stop_desc else R.string.mic_start_desc)
-    val stateDesc = stringResource(if (listening) R.string.mic_state_listening else R.string.mic_state_idle)
-    val label = stringResource(
-        when {
-            busy -> R.string.mic_busy_label
-            listening -> R.string.mic_stop_label
-            else -> R.string.mic_start_label
-        }
-    )
-    // Tap-to-start / tap-to-stop (not press-and-hold) so it works with TalkBack,
-    // Switch Access, voice access and limited motor control.
-    Box(contentAlignment = Alignment.Center) {
-        // Siri-style pulse: a ring breathes behind the mic while recording (VAD may also
-        // finish the utterance automatically — single-shot).
-        if (listening) {
-            val pulse = rememberInfiniteTransition(label = "micPulse")
-            val ringScale by pulse.animateFloat(
-                initialValue = 1f,
-                targetValue = 1.22f,
-                animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
-                label = "ringScale",
-            )
-            Box(
-                Modifier
-                    .size(136.dp)
-                    .scale(ringScale)
-                    .alpha(0.45f)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.errorContainer),
-            )
-        }
-        Button(
-            onClick = onClick,
-            enabled = !busy,
-            shape = CircleShape,
-            contentPadding = PaddingValues(0.dp),
-            colors = if (listening) {
-                ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.error,
-                    contentColor = MaterialTheme.colorScheme.onError,
-                )
-            } else ButtonDefaults.buttonColors(),
-            modifier = Modifier
-                .size(136.dp)
-                .semantics {
-                    contentDescription = desc
-                    stateDescription = stateDesc
-                },
-        ) {
-            if (busy) {
-                CircularProgressIndicator(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clearAndSetSemantics { }, // status text already announces progress
-                )
-            } else {
-                Icon(
-                    imageVector = if (listening) Icons.Filled.Stop else Icons.Filled.Mic,
-                    contentDescription = null, // button carries the description
-                    modifier = Modifier.size(64.dp),
-                )
-            }
-        }
-    }
-    // Visible text label: state is never conveyed by colour or icon alone.
-    Text(label, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
-}
-
-@Composable
-private fun TranscriptCard(state: UiState) {
-    val shown = if (state.listening) state.partial else state.transcript
-    val empty = stringResource(R.string.heard_empty)
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                stringResource(R.string.heard_heading),
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.semantics { heading() },
-            )
-            Text(shown.ifBlank { empty }, style = MaterialTheme.typography.bodyLarge)
         }
     }
 }

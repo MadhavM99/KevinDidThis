@@ -34,11 +34,16 @@ enum class Step { CAPTURE, REVIEW, SUBMITTED }
 
 data class UiState(
     val step: Step = Step.CAPTURE,
+    /** Microphone is live; live captions stream into [partial]. */
     val listening: Boolean = false,
+    /** A recording was stopped (or the VAD closed it) and the transcript is ready for review. */
+    val transcriptReady: Boolean = false,
     val processing: Boolean = false,
     val loadingForm: Boolean = true,
     val typedText: String = "",
+    /** Live ASR caption while [listening]. */
     val partial: String = "",
+    /** The final (editable) transcript the user reviews before continuing. */
     val transcript: String = "",
     /** The dynamic form definition currently in use (fetched from the server). */
     val schema: FormSchema = FormSchema(id = ""),
@@ -63,9 +68,14 @@ data class UiState(
 }
 
 /**
- * Runs the pipeline on top of a dynamic form definition:
- * speak -> STT -> LLM extraction (tool calls) -> normalize + merge -> mandatory-field
- * gate -> (missing? ask the field's question) / (complete? review) -> submit + proxy POST.
+ * Runs the pipeline on top of a dynamic form definition, recorder-style:
+ *
+ *   Start → speak (live ASR caption on screen) → Stop (or VAD closes) → review + edit the
+ *   transcript → Continue → LLM extraction (tool calls) → normalize + merge →
+ *   mandatory-field gate → (missing? ask) / (complete? review) → submit + server POST.
+ *
+ * The transcript is ALWAYS shown and editable before it reaches the LLM, so transcription
+ * mistakes are caught by the human instead of being extracted into the report.
  *
  * The AI stages are behind the ai/ seams; everything here is deterministic.
  */
@@ -81,10 +91,7 @@ class IncidentViewModel(
     private var formState: FormState = FormState(schema)
     private var followUpField: FormField? = null
 
-    /** A widget tap asked us to start recording; survives form loading + permission dance. */
-    private var autoListenQueued = false
-
-    /** Watches the ASR backend's end-of-speech signal for single-shot mode. */
+    /** Watches the ASR backend's end-of-speech signal (VAD closed the utterance). */
     private var autoStopJob: Job? = null
 
     private val clockFormat = DateTimeFormatter.ofPattern("HH:mm")
@@ -114,34 +121,13 @@ class IncidentViewModel(
                 loadingForm = false,
                 schema = loaded,
                 values = formState.entries(),
+                transcript = "",
+                transcriptReady = false,
+                listening = false,
                 status = str(R.string.status_ready),
             )
         }
         pushWidget(str(R.string.widget_status_ready))
-        startIfPossible()
-    }
-
-    // ---------- Single-shot / widget flow ----------
-
-    /**
-     * Called on a widget tap (EXTRA_AUTO_LISTEN): the mic button flow but queued, so it
-     * survives form loading and works from the home screen.
-     */
-    fun requestAutoListen() {
-        autoListenQueued = true
-        startIfPossible()
-    }
-
-    /** Mic-permission launcher callback: routes to the queued widget start or the mic button. */
-    fun onMicPermissionGranted() {
-        if (autoListenQueued) startIfPossible() else onMicTapped()
-    }
-
-    private fun startIfPossible() {
-        val state = _ui.value
-        if (state.loadingForm || state.processing || state.listening || schema.fields.isEmpty()) return
-        autoListenQueued = false
-        startListening()
     }
 
     /** Re-fetch the form definition from the server (starts a fresh draft). */
@@ -151,37 +137,86 @@ class IncidentViewModel(
         viewModelScope.launch { loadForm() }
     }
 
-    // ---------- Capture ----------
+    // ---------- Recorder flow: Start / Stop / Re-record / Continue ----------
 
-    fun onMicTapped() {
-        val state = _ui.value
-        if (state.processing || state.loadingForm || schema.fields.isEmpty()) return
-        if (state.listening) stopAndProcess() else startListening()
-    }
+    /** Called when the mic-permission dialog was granted (from Start or the widget). */
+    fun onMicPermissionGranted() = onStartRecording()
 
     fun onMicPermissionDenied() = setStatus(R.string.status_mic_denied, speak = true)
 
-    private fun startListening() {
+    /** Start capturing: live captions stream into `partial` until Stop or VAD close. */
+    fun onStartRecording() {
+        val state = _ui.value
+        if (state.processing || state.listening || state.loadingForm || schema.fields.isEmpty()) return
         container.synthesizer.stop() // never talk over the user
-        _ui.update { it.copy(listening = true, partial = "", status = str(R.string.status_listening)) }
+        _ui.update { it.copy(listening = true, transcriptReady = false, partial = "", status = str(R.string.status_listening)) }
         pushWidget(str(R.string.widget_status_listening))
         viewModelScope.launch { container.speechToText.startListening() }
-        // Single-shot: when the ASR backend's VAD closes the utterance, stop + process
-        // without another tap (backends without VAD never emit; tap-to-stop still works).
+        // VAD backends (Whisper SDK) close the utterance themselves → move to review.
         autoStopJob?.cancel()
         autoStopJob = viewModelScope.launch {
-            container.speechToText.utteranceFinished.collect { stopAndProcess() }
+            container.speechToText.utteranceFinished.collect { finalizeTranscript() }
         }
     }
 
-    private fun stopAndProcess() {
+    /** Manual stop (the Stop button). */
+    fun onStopRecording() {
+        val state = _ui.value
+        if (!state.listening) return
+        finalizeTranscript()
+    }
+
+    /** Brought the transcript into the review state, ready to edit or re-record. */
+    private fun finalizeTranscript() {
+        val state = _ui.value
+        if (!state.listening) return
         autoStopJob?.cancel()
         autoStopJob = null
-        _ui.update { it.copy(listening = false, processing = true, status = str(R.string.status_processing)) }
-        pushWidget(str(R.string.widget_status_working))
+        _ui.update { it.copy(listening = false) }
         viewModelScope.launch {
             try {
                 val text = container.speechToText.stopListening()
+                val trimmed = text.trim()
+                _ui.update {
+                    it.copy(
+                        transcript = trimmed,
+                        transcriptReady = true,
+                        status = str(if (trimmed.isEmpty()) R.string.rec_empty else R.string.rec_review),
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fail()
+            }
+            pushWidget(str(R.string.widget_status_ready))
+        }
+    }
+
+    /** Throw the transcript away and record the same utterance again. */
+    fun onReRecord() {
+        val state = _ui.value
+        if (state.processing || state.listening) return
+        _ui.update { it.copy(transcript = "", transcriptReady = false, partial = "") }
+        onStartRecording()
+    }
+
+    /** The user is fixing the ASR text before it reaches the LLM. */
+    fun onTranscriptChange(text: String) = _ui.update { it.copy(transcript = text) }
+
+    /** Send the reviewed transcript into the extraction pipeline. */
+    fun onUseTranscript() {
+        val state = _ui.value
+        if (state.processing || state.listening) return
+        val text = state.transcript.trim()
+        if (text.isEmpty()) {
+            setStatus(R.string.status_empty_input, speak = false)
+            return
+        }
+        _ui.update { it.copy(transcriptReady = false, processing = true, status = str(R.string.status_processing)) }
+        pushWidget(str(R.string.widget_status_working))
+        viewModelScope.launch {
+            try {
                 process(text)
             } catch (e: CancellationException) {
                 throw e
@@ -193,15 +228,17 @@ class IncidentViewModel(
 
     fun onTypedTextChange(text: String) = _ui.update { it.copy(typedText = text) }
 
+    /** Fallback entry without the microphone: type the whole utterance. */
     fun onSendTyped() {
         val state = _ui.value
-        if (state.processing || state.loadingForm) return
+        if (state.processing || state.listening || state.loadingForm) return
         if (state.typedText.isBlank()) {
             setStatus(R.string.status_empty_input, speak = false)
             return
         }
         val text = state.typedText
         _ui.update { it.copy(typedText = "", processing = true, status = str(R.string.status_processing)) }
+        pushWidget(str(R.string.widget_status_working))
         viewModelScope.launch {
             try {
                 process(text)
@@ -308,6 +345,10 @@ class IncidentViewModel(
                 step = Step.CAPTURE,
                 followUpFieldId = null,
                 followUpQuestion = null,
+                transcript = "",
+                transcriptReady = false,
+                listening = false,
+                partial = "",
                 status = str(R.string.status_add_more),
             )
         }
@@ -347,7 +388,7 @@ class IncidentViewModel(
             }
             _ui.update { it.copy(step = Step.SUBMITTED, submittedId = saved.id, status = message) }
             pushWidget(
-                str(R.string.widget_status_done) + " " + ZonedDateTime.now().format(clockFormat)
+                str(R.string.widget_status_done) + " " + ZonedDateTime.now().format(clockFormat),
             )
             speakPrompt(message)
         }
@@ -368,6 +409,7 @@ class IncidentViewModel(
                 loadingForm = false,
             )
         }
+        pushWidget(str(R.string.widget_status_ready))
     }
 
     // ---------- helpers ----------
@@ -384,7 +426,9 @@ class IncidentViewModel(
     }
 
     private fun fail() {
-        _ui.update { it.copy(listening = false, processing = false, status = str(R.string.status_error)) }
+        _ui.update {
+            it.copy(listening = false, processing = false, status = str(R.string.status_error))
+        }
     }
 
     private fun setStatus(resId: Int, speak: Boolean) {

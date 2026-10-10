@@ -9,15 +9,19 @@
 
     <!-- Capture screen -->
     <string name="placeholder_banner">Demo mode: speech recognition and language models are placeholders. Plug in your on-device models to enable real extraction.</string>
-    <string name="mic_start_label">Tap to start speaking</string>
-    <string name="mic_stop_label">Listening. Tap to stop.</string>
+    <!-- Recorder flow: Start → live caption → Stop → review transcript → Continue -->
+    <string name="rec_start">Start recording</string>
+    <string name="rec_stop">Stop and review</string>
+    <string name="rec_rerecord">Re-record</string>
+    <string name="rec_continue">Continue</string>
+    <string name="rec_listening">What I hear:</string>
+    <string name="rec_hear_hint">Listening — speak now</string>
+    <string name="rec_transcript_label">Transcript</string>
+    <string name="rec_transcript_hint">Fix any mistakes — this text goes to the assistant.</string>
+    <string name="rec_empty">I didn\'t hear anything — re-record or type it.</string>
+    <string name="rec_review">Here is what I heard. Check it and fix anything wrong, then continue.</string>
     <string name="mic_busy_label">Working, please wait</string>
-    <string name="mic_start_desc">Start recording</string>
-    <string name="mic_stop_desc">Stop recording and process</string>
     <string name="mic_state_idle">Not recording</string>
-    <string name="mic_state_listening">Recording</string>
-    <string name="heard_heading">What I heard</string>
-    <string name="heard_empty">Nothing yet. Speak or type your report.</string>
     <string name="type_label">Or type your report</string>
     <string name="type_answer_label">Type your answer</string>
     <string name="send">Send</string>
@@ -29,7 +33,7 @@
     <string name="refresh_form">Refresh form from server</string>
 
     <!-- Status messages (announced to screen readers and optionally spoken) -->
-    <string name="status_ready">Ready. Tap the microphone and describe the incident.</string>
+    <string name="status_ready">Tap Start, speak, then review the transcript before continuing.</string>
     <string name="status_listening">Listening</string>
     <string name="status_processing">Understanding your report</string>
     <string name="status_review_ready">I filled in the report. Please review it, fix anything that is wrong, then submit.</string>
@@ -66,7 +70,7 @@
     <string name="widget_title">Incident Report</string>
     <string name="widget_speak">Tap, speak, done</string>
     <string name="widget_description">One-tap voice incident reporting</string>
-    <string name="widget_status_ready">Ready — tap to report</string>
+    <string name="widget_status_ready">Ready</string>
     <string name="widget_status_listening">Listening…</string>
     <string name="widget_status_working">Working…</string>
     <string name="widget_status_done">Filed</string>

@@ -12,11 +12,10 @@ import com.megathon.incidentassistant.MainActivity
 import com.megathon.incidentassistant.R
 
 /**
- * Home-screen widget — the Siri-style entry point.
+ * Home-screen widget — the entry point to the app.
  *
- * One tap opens the app with [MainActivity.EXTRA_AUTO_LISTEN] and recording starts
- * immediately (single-shot: VAD closes the utterance, the pipeline runs, TTS announces
- * the report). The status line mirrors what the app is doing
+ * One tap opens the app; recording is button-driven there (Start → speak → Stop → review
+ * the transcript → Continue). The status line mirrors what the app is doing
  * ("Listening…", "Working…", "Filed 14:32") and is pushed from the ViewModel.
  */
 class IncidentWidget : AppWidgetProvider() {
@@ -64,7 +63,6 @@ class IncidentWidget : AppWidgetProvider() {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or
                         Intent.FLAG_ACTIVITY_CLEAR_TOP or
                         Intent.FLAG_ACTIVITY_SINGLE_TOP
-                    putExtra(MainActivity.EXTRA_AUTO_LISTEN, true)
                 },
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
