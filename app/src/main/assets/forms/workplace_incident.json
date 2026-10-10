@@ -1,0 +1,219 @@
+{
+  "id": "workplace_incident",
+  "title": "Workplace Incident Report",
+  "version": "1.0",
+  "fields": [
+    {
+      "id": "reporter_name",
+      "label": "Reported By",
+      "type": "text",
+      "required": true,
+      "question": "Who is filing this report?",
+      "keywords": ["reported by", "my name is", "this is"]
+    },
+    {
+      "id": "department",
+      "label": "Department",
+      "type": "enum",
+      "required": true,
+      "question": "Which department are you in?",
+      "keywords": ["department", "team", "unit"],
+      "options": [
+        { "value": "production", "label": "Production", "aliases": ["assembly", "manufacturing", "shop floor"] },
+        { "value": "maintenance", "label": "Maintenance", "aliases": ["repair", "facilities"] },
+        { "value": "warehouse", "label": "Warehouse", "aliases": ["storage", "logistics yard"] },
+        { "value": "quality_control", "label": "Quality Control", "aliases": ["qc", "inspection"] },
+        { "value": "engineering", "label": "Engineering", "aliases": ["design", "technical"] },
+        { "value": "office_admin", "label": "Office / Admin", "aliases": ["office", "admin", "front desk"] },
+        { "value": "laboratory", "label": "Laboratory", "aliases": ["lab", "testing lab"] },
+        { "value": "other", "label": "Other", "aliases": [] }
+      ]
+    },
+    {
+      "id": "incident_date_time",
+      "label": "Date & Time of Incident",
+      "type": "datetime",
+      "required": true,
+      "question": "When did the incident happen — date and time, even approximate?",
+      "keywords": ["when did", "happened at", "this morning", "yesterday", "last night"]
+    },
+    {
+      "id": "location",
+      "label": "Exact Location",
+      "type": "text",
+      "required": true,
+      "question": "Where exactly did it happen?",
+      "keywords": ["where", "area", "zone", "line", "bay", "floor", "site", "near"]
+    },
+    {
+      "id": "incident_category",
+      "label": "Incident Category",
+      "type": "enum",
+      "required": true,
+      "question": "What type of incident is this — for example an injury, a near miss, property damage, or a chemical exposure?",
+      "keywords": ["type of incident", "what happened", "category"],
+      "options": [
+        { "value": "near_miss", "label": "Near miss", "aliases": ["close call", "almost happened", "no injury"] },
+        { "value": "injury_illness", "label": "Injury / illness", "aliases": ["hurt", "injured", "sick", "medical"] },
+        { "value": "property_damage", "label": "Property damage", "aliases": ["damaged", "broke", "broken equipment"] },
+        { "value": "chemical_exposure", "label": "Chemical exposure", "aliases": ["chemical", "fumes", "spill", "leak"] },
+        { "value": "fire_explosion", "label": "Fire / explosion", "aliases": ["fire", "smoke", "explosion"] },
+        { "value": "electrical", "label": "Electrical", "aliases": ["shock", "sparking", "short circuit"] },
+        { "value": "equipment_failure", "label": "Equipment failure", "aliases": ["machine down", "malfunction", "failure"] },
+        { "value": "slip_trip_fall", "label": "Slip / trip / fall", "aliases": ["slipped", "tripped", "fell"] },
+        { "value": "vehicle_incident", "label": "Vehicle incident", "aliases": ["forklift", "truck", "collision", "hit"] },
+        { "value": "environmental_release", "label": "Environmental release", "aliases": ["spill to drain", "emission", "release"] },
+        { "value": "security", "label": "Security", "aliases": ["theft", "trespass", "intruder"] },
+        { "value": "other", "label": "Other", "aliases": [] }
+      ]
+    },
+    {
+      "id": "severity_classification",
+      "label": "Severity Classification",
+      "type": "enum",
+      "required": true,
+      "question": "How serious was it — near miss, first aid only, medical treatment, restricted duty, lost time, or fatality?",
+      "keywords": ["how serious", "severity"],
+      "options": [
+        { "value": "near_miss", "label": "Near miss (no injury or damage)", "aliases": ["no injury", "close call"] },
+        { "value": "first_aid", "label": "First aid only", "aliases": ["minor", "bandage", "first aid"] },
+        { "value": "medical_treatment", "label": "Medical treatment beyond first aid", "aliases": ["hospital", "doctor", "stitches", "medical treatment"] },
+        { "value": "restricted_duty", "label": "Restricted duty", "aliases": ["light duty", "modified duty"] },
+        { "value": "lost_time", "label": "Lost time (days away from work)", "aliases": ["off work", "days off", "lost time"] },
+        { "value": "fatality", "label": "Fatality", "aliases": ["death", "died", "fatal"] }
+      ]
+    },
+    {
+      "id": "description",
+      "label": "What Happened",
+      "type": "textarea",
+      "required": true,
+      "question": "Describe what happened, step by step if you can.",
+      "keywords": ["describe", "what happened"]
+    },
+    {
+      "id": "immediate_actions",
+      "label": "Immediate Actions Taken",
+      "type": "textarea",
+      "required": true,
+      "question": "What was done immediately — first aid, area secured, supervisor or emergency services notified?",
+      "keywords": ["first aid", "secured", "notified", "called", "stopped work", "isolated"]
+    },
+    {
+      "id": "task_being_performed",
+      "label": "Task Being Performed",
+      "type": "text",
+      "required": false,
+      "ask_once": true,
+      "group": "context",
+      "keywords": ["task", "working on", "doing"]
+    },
+    {
+      "id": "shift",
+      "label": "Shift",
+      "type": "enum",
+      "required": false,
+      "ask_once": true,
+      "group": "context",
+      "options": [
+        { "value": "day", "label": "Day shift", "aliases": ["morning shift", "first shift"] },
+        { "value": "swing", "label": "Swing shift", "aliases": ["afternoon shift", "second shift", "evening"] },
+        { "value": "night", "label": "Night shift", "aliases": ["third shift", "graveyard", "overnight"] }
+      ]
+    },
+    {
+      "id": "persons_involved",
+      "label": "Persons Involved",
+      "type": "string_list",
+      "required": false,
+      "ask_once": true,
+      "group": "people",
+      "keywords": ["who was involved", "people involved"]
+    },
+    {
+      "id": "witnesses",
+      "label": "Witnesses",
+      "type": "string_list",
+      "required": false,
+      "ask_once": true,
+      "group": "people",
+      "keywords": ["witness", "saw it", "saw what happened"]
+    },
+    {
+      "id": "injury_details",
+      "label": "Injury / Illness Details",
+      "type": "textarea",
+      "required": false,
+      "ask_once": true,
+      "group": "people",
+      "keywords": ["injury", "hurt", "pain", "body part"]
+    },
+    {
+      "id": "equipment_involved",
+      "label": "Equipment / Asset Involved",
+      "type": "string_list",
+      "required": false,
+      "ask_once": true,
+      "group": "followup",
+      "keywords": ["equipment", "asset", "machine", "asset id", "tool"]
+    },
+    {
+      "id": "root_cause",
+      "label": "Suspected Root Cause",
+      "type": "enum",
+      "required": false,
+      "ask_once": true,
+      "group": "followup",
+      "keywords": ["cause", "why", "root cause"],
+      "options": [
+        { "value": "unknown", "label": "Unknown / still investigating", "aliases": ["not sure", "dont know"] },
+        { "value": "equipment_failure", "label": "Equipment failure", "aliases": ["machine failed", "broke down"] },
+        { "value": "procedure_not_followed", "label": "Procedure not followed", "aliases": ["skipped step", "wrong procedure"] },
+        { "value": "insufficient_training", "label": "Insufficient training", "aliases": ["untrained", "new to the task"] },
+        { "value": "human_error", "label": "Human error", "aliases": ["mistake", "slipped up"] },
+        { "value": "poor_housekeeping", "label": "Poor housekeeping", "aliases": ["messy area", "cluttered", "wet floor not marked"] },
+        { "value": "ppe_not_used", "label": "PPE not used / inadequate", "aliases": ["no gloves", "no helmet", "ppe"] },
+        { "value": "weather", "label": "Weather conditions", "aliases": ["rain", "wind", "ice"] },
+        { "value": "other", "label": "Other", "aliases": [] }
+      ]
+    },
+    {
+      "id": "corrective_actions",
+      "label": "Recommended Corrective Actions",
+      "type": "textarea",
+      "required": false,
+      "ask_once": true,
+      "group": "followup",
+      "keywords": ["prevent", "corrective action", "follow up", "recommend"]
+    },
+    {
+      "id": "lost_time_days",
+      "label": "Days Away from Work",
+      "type": "number",
+      "required": false,
+      "ask_once": true,
+      "group": "followup",
+      "keywords": ["days off", "days away"]
+    },
+    {
+      "id": "reportable_to_authority",
+      "label": "Reportable to Regulator?",
+      "type": "boolean",
+      "required": false,
+      "ask_once": true,
+      "group": "followup",
+      "keywords": ["report to", "regulator", "authority", "osha"]
+    }
+  ],
+  "question_groups": [
+    { "id": "context", "prompt": "What task was being performed at the time, and which shift was it?" },
+    { "id": "people", "prompt": "Who was involved or injured, and was anyone else a witness?" },
+    { "id": "followup", "prompt": "Was any equipment or asset involved, what do you think caused it, what follow-up do you recommend, and does it need to be reported to a regulator?" }
+  ],
+  "behavior": {
+    "ask_optional_once": true,
+    "optional_mode": "combined",
+    "confirm_before_submit": true,
+    "allow_unknown_required": true
+  }
+}
