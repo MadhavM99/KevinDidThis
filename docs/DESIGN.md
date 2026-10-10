@@ -82,7 +82,7 @@ Last updated: 2026-10-10.
 │  └───────────────────────┘    └───────────────┬──────────────────────────┬──────────────────┘│
 │                                               │                          │                   │
 │                        ┌──────────────────────▼─────┐          ┌─────────▼─────────────┐     │
-│                        │ LLM backend (Genie JNI,    │          │ TTS backend (MeloTTS  │     │
+│                        │ LLM backend (Genie JNI,    │          │ TTS backend (PiperTTS │     │
 │                        │ NPU, streaming callback)   │          │ NPU / Android TTS)    │     │
 │                        └────────────────────────────┘          └───────────────────────┘     │
 │                                                                                              │
@@ -114,7 +114,7 @@ Last updated: 2026-10-10.
 | ASR final (≤ 8 s utterance) | 150–500 ms | Whisper-Base/Small quantized, 30 s padded window |
 | Extraction LLM | 500–1500 ms | 3–4B w4a16, ≤ 160 new tokens, low temp |
 | Policy + form update | < 10 ms | pure Kotlin |
-| TTS first audio | 100–300 ms | sentence-chunked MeloTTS; Android TTS fallback |
+| TTS first audio | 100–300 ms | sentence-chunked PiperTTS-EN; Android TTS fallback |
 | **Turn total** | **1.2–2.8 s** | partials + speculative extraction are optional levers |
 
 ### 2.3 Threading model
@@ -272,7 +272,7 @@ the fixtures in `tools/forms/`.
 | Fallback LLM | **Llama-3.2-3B-Instruct** (w4a16) | exactly what the QIDK `AI-Assistant` sample ships and validates |
 | ASR | **Whisper-Base** (fast) / **Whisper-Small** or **Large-V3-Turbo-Quantized** (accurate) | AI Hub pre-compiled; Voice AI ASR SDK on QIDK |
 | VAD | Silero VAD (ONNX via onnxruntime-android) or energy VAD | tiny, CPU, reliable endpointing |
-| TTS | **MeloTTS EN** (Voice AI TTS SDK, NPU) | QIDK ASR-LLM-TTS sample stack |
+| TTS | **PiperTTS-EN** (Voice AI TTS SDK, NPU) | AI Hub `pipertts_en` (MIT); NPU per the qai-appbuilder sample + Audio Analytics container |
 | TTS fallback | Android system TTS (offline) | zero setup, guarantees demo path |
 
 ### 4.2 Function/tool calling protocol (app-defined, strict)
@@ -494,8 +494,8 @@ AudioRecord 16 kHz mono PCM16 → ring buffer → VAD (Silero ONNX, 512-sample f
 
 | Backend | Status | Notes |
 |---|---|---|
-| `MeloTtsQnn` | primary on device | QIDK ASR-LLM-TTS `TTSManager.java` + `tts-sdk.jar` + `libtts*.so` + `melo_en.64_bit.qnn` |
-| `AndroidTts` | fallback / dev | system offline TTS; zero setup; used until MeloTTS is pushed |
+| `PiperTtsQnn` (`VoiceAiTtsSynthesizer`) | primary on device | VoiceAI TTS SDK + combined `piper_en.64_bit.qnn` model (build-piper-model.sh) |
+| `AndroidTts` | fallback / dev | system offline TTS; zero setup; used until the Piper model is pushed |
 | `NoTts` | debug | speak = print (unit tests, CI) |
 
 ---
@@ -602,7 +602,7 @@ KevinDidThis/                                  single Android Studio project
 │       │       ├── AppContainer.kt            manual DI + AppConfig (proxy URL, placeholder switch)
 │       │       ├── MainActivity.kt            Compose host, 3-step navigation
 │       │       ├── ai/                        SpeechToText / IncidentExtractor / SpeechSynthesizer
-│       │       │                              (placeholders now; Whisper / Genie / MeloTTS later)
+│       │       │                              (placeholders now; Whisper / Genie / Piper later)
 │       │       ├── form/                      FormSchema, FormState, FieldNormalizer,
 │       │       │                              ToolCallParser, ExtractionPromptBuilder  [dynamic form core]
 │       │       ├── net/                       ProxyApi: form fetch + report submit (§8.1)
@@ -736,7 +736,7 @@ class AppContainer(context: Context) {
 
 - **UI (Compose, single activity)**:
   - Header: assistant state pill (`Listening / Thinking / Speaking`), backend chips
-    (`NPU: Qwen3-4B • Whisper-Base • MeloTTS`).
+    (`NPU: Gemma-4-E2B • Whisper-Base • PiperTTS`).
   - Main: `FormCard` list — each field shows label, normalized value, confidence dot
     (green ≥0.8, amber 0.5–0.8, red <0.5 / ambiguous), status chip (`answered`,
     `inferred`, `unknown`), tap → evidence/utterance.
@@ -781,7 +781,7 @@ class AppContainer(context: Context) {
 | Genie libs | `libGenie.so`, `libQnnHtp.so`, `libQnnHtpV75Stub.so`, `libQnnSystem.so` → `jniLibs/arm64-v8a` | from matching QAIRT |
 | LLM bundle | AI Hub `qai_hub_models` export for `qualcomm-snapdragon-8-gen-3` | w4a16 ctx-bins + tokenizer + `genie_config.json` |
 | Whisper | Voice AI ASR (QPM) or AI Hub precompiled | Whisper-Base/Small, 16 kHz |
-| MeloTTS | Voice AI TTS (QPM) MeloTTS notebook output | `melo_en.64_bit.qnn_v2.33.0.qnn` |
+| PiperTTS-EN | Voice AI TTS (QPM) piper conversion notebook output | `piper_en.64_bit.qnn_v2.50.0.qnn` |
 
 ### 10.2 LLM bundle (host)
 
@@ -812,7 +812,7 @@ adb push $QAIRT/lib/aarch64-android/*      /data/local/tmp/genie_bundle/
 - `GenieLlm` loads config JSON from `/data/local/tmp/genie_bundle/genie_config.json`,
   sets `ADSP_LIBRARY_PATH`/`LD_LIBRARY_PATH`, `GenieDialog_create`, then per-turn
   `GenieDialog_query` with streaming callback (port of QIDK `native-lib.cpp`).
-- Whisper/MeloTTS models under the app's external files dir (as in the QIDK samples),
+- Whisper/Piper models under the app's external files dir (as in the QIDK samples),
   e.g. `/storage/emulated/0/Android/data/com.megathon.incidentassistant/files/{asr,tts}/`.
 - First-run self-check screen shows which backends loaded; missing model → fallback +
   banner.

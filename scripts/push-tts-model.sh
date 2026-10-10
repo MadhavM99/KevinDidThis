@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
-# Pushes MeloTTS runtime files onto a connected device for the Incident Assistant app.
+# Pushes Piper TTS runtime files onto a connected device for the Incident Assistant app.
 #
 # The TTS SDK needs, in ONE directory:
-#   melo_en.64_bit.qnn_v2.50.0.qnn   (combined model, built by build-melo-model.sh)
-#   libtts_impl_skel.so              (DSP skeleton, from the VoiceAI_TTS package)
-#   libQnnHtpVXX.so + libQnnSystem.so (DSP-side QNN libs; XX = HTP version of your SoC)
+#   piper_en.64_bit.qnn_v2.50.0.qnn    (combined model, built by build-piper-model.sh)
+#   libtts_impl_skel.so                (DSP skeleton, from the VoiceAI_TTS package)
+#   libQnnHtpVXX.so + libQnnSystem.so  (DSP-side QNN libs; XX = HTP version of your SoC)
+#
+# PiperTTS-EN on NPU references: AI Hub model card pipertts_en, qai-appbuilder sample
+# pipertts_en ("fully on the Snapdragon NPU"), Audio Analytics container piper-tts-en.
 #
 # HTP version by SoC: SM8975 V85 | SM8850/SM8845 V81 | SM8750 V79 | SM8650 V75 |
 #   QCS8550/SM8550/SM8635/SM7750/SM7635 V73 | QCM6490 V68
 #
-# Usage: HTP_VERSION=V75 ./scripts/push-tts-model.sh <path/to/melo_en...qnn>
+# Usage: HTP_VERSION=V75 ./scripts/push-tts-model.sh <path/to/piper_en...qnn>
 set -euo pipefail
 
 PKG=com.megathon.incidentassistant
