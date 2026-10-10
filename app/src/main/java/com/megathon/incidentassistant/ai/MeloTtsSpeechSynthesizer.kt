@@ -53,6 +53,9 @@ class MeloTtsSpeechSynthesizer(context: Context) : SpeechSynthesizer {
     /** A failed init is not retried: repeated native init attempts can crash the process. */
     @Volatile private var initFailed = false
 
+    /** [restoreDspThreadStack] runs once per process. */
+    @Volatile private var stackRestored = false
+
     /** Frames (not bytes) written to the current track, for the drain-before-release wait. */
     @Volatile private var framesWritten = 0L
     @Volatile private var bytesPerFrame = 2
@@ -78,6 +81,44 @@ class MeloTtsSpeechSynthesizer(context: Context) : SpeechSynthesizer {
         worker.post {
             try {
                 ensureInit(model)
+            } finally {
+                done.complete(Unit)
+            }
+        }
+        done.await()
+    }
+
+    /**
+     * Puts the CDSP thread stack back to the SDK's 128 KB after Whisper lowered it.
+     *
+     * The stack size is process-wide and fixed when a DSP thread is created. MeloTTS
+     * synthesises each utterance on a new native thread, so a new DSP thread, which gets
+     * whatever size is current. Whisper's QNN HTP backend sets 17 KB when it initialises,
+     * and the TTS skel then overflows it in `tts_impl_get_result` (CDSP crash, zero audio,
+     * shared DSP session lost; seen on the QIDK). The SDK only requests 128 KB inside
+     * `init()`, so the engine is re-initialised once, after Whisper. Whisper does not lower
+     * the stack again after its init, so this holds for the rest of the process.
+     */
+    suspend fun restoreDspThreadStack() {
+        if (stackRestored) return
+        stackRestored = true
+        val done = CompletableDeferred<Unit>()
+        worker.post {
+            try {
+                val t = tts ?: return@post
+                t.deInit()
+                t.init()
+                if (t.state == TTSNative.TTSEngineState.INIT) {
+                    Log.i(TAG, "melo tts re-initialised: DSP thread stack restored")
+                } else {
+                    Log.e(TAG, "melo tts re-init failed, state=${t.state}")
+                    tts = null
+                    initFailed = true
+                }
+            } catch (e: Throwable) {
+                Log.e(TAG, "melo tts re-init failed: ${e.message}")
+                tts = null
+                initFailed = true
             } finally {
                 done.complete(Unit)
             }

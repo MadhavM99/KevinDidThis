@@ -6,6 +6,8 @@ import com.megathon.incidentassistant.ai.AndroidSpeechSynthesizer
 import com.megathon.incidentassistant.ai.GemmaGenieXLlm
 import com.megathon.incidentassistant.ai.GemmaModels
 import com.megathon.incidentassistant.ai.LlmBackend
+import com.megathon.incidentassistant.ai.PiperModels
+import com.megathon.incidentassistant.ai.PiperSpeechSynthesizer
 import com.megathon.incidentassistant.ai.SpeechSynthesizer
 import com.megathon.incidentassistant.ai.SpeechToText
 import com.megathon.incidentassistant.ai.WhisperSpeechToText
@@ -42,9 +44,10 @@ object AppConfig {
  *
  *  - ASR: Qualcomm Whisper SDK on the Hexagon HTP (`scripts/push-whisper-models.sh`)
  *  - LLM: Gemma 4 E2B through GenieX llama.cpp on the Hexagon NPU (`scripts/push-gemma-model.sh`)
- *  - TTS: Android built-in TextToSpeech (no model required; pick an offline voice in system settings)
+ *  - TTS: a Piper voice through sherpa-onnx on the CPU (`scripts/fetch-piper-tts.sh`), with
+ *    Android's built-in TextToSpeech as the fallback when the voice is not on the device
  *
- * See docs/ASR.md and docs/LLM.md.
+ * See docs/ASR.md, docs/LLM.md and docs/TTS.md.
  */
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
@@ -57,8 +60,14 @@ class AppContainer(context: Context) {
         GemmaModels.appDir(appContext) ?: appContext.filesDir.absolutePath,
     )
 
-    /** Android system TTS — no model bundle required. */
-    val synthesizer: SpeechSynthesizer = AndroidSpeechSynthesizer(appContext)
+    /**
+     * Piper (sherpa-onnx, CPU) when its voice is on the device, otherwise Android's system TTS.
+     * Not MeloTTS on the NPU: the VoiceAI TTS SDK cannot run the 8 Gen 3 MeloTTS assets and
+     * a failed synthesis crashes the CDSP session Whisper and Gemma share (docs/TTS.md).
+     */
+    val synthesizer: SpeechSynthesizer =
+        if (PiperModels.resolve(appContext) != null) PiperSpeechSynthesizer(appContext)
+        else AndroidSpeechSynthesizer(appContext)
     val repository: ReportRepository = InMemoryReportRepository()
 
     /** Bundled sample by default; the server (when configured) replaces it. */

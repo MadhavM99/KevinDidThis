@@ -11,6 +11,7 @@ import com.megathon.incidentassistant.AppContainer
 import com.megathon.incidentassistant.IncidentApp
 import com.megathon.incidentassistant.R
 import com.megathon.incidentassistant.ai.AsrStatus
+import com.megathon.incidentassistant.ai.MeloTtsSpeechSynthesizer
 import com.megathon.incidentassistant.ai.LlmStatus
 import com.megathon.incidentassistant.ai.NoSpeechException
 import com.megathon.incidentassistant.form.FieldStatus
@@ -139,10 +140,21 @@ class IncidentViewModel(
 
     init {
         viewModelScope.launch {
-            // ASR first: Whisper.init() registers its model dir on the DSP library search
-            // path, where Gemma's Hexagon backend finds libggml-htp-vXX.so. Then the LLM.
+            // Order matters on the shared CDSP process (verified on the QIDK, see docs/TTS.md):
+            //  1. TTS: MeloTTS init() asks for a 128 KB DSP thread stack; its own DSP thread
+            //     is created with it.
+            //  2. ASR: Whisper.init() registers its model dir on the DSP library search path,
+            //     where Gemma's Hexagon backend finds libggml-htp-vXX.so. Its QNN HTP backend
+            //     also lowers the process-wide DSP thread stack to 17 KB.
+            //  3. TTS again: re-applies 128 KB, or every utterance's synthesis thread overflows
+            //     its stack on the DSP (crash, no audio, DSP session lost).
+            //  4. LLM: ggml-hexagon opens its own session and leaves the stack alone.
             // Each stage is isolated: a failure must never block the rest of the pipeline.
+            safePrepare("tts") { container.synthesizer.prepare() }
             safePrepare("asr") { container.speechToText.prepare() }
+            safePrepare("tts-stack") {
+                (container.synthesizer as? MeloTtsSpeechSynthesizer)?.restoreDspThreadStack()
+            }
             safePrepare("llm") { container.llm.prepare() }
             maybeStartPendingAutoListen()
         }
