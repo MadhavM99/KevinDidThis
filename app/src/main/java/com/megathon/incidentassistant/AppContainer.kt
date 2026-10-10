@@ -4,10 +4,12 @@ import android.app.Application
 import android.content.Context
 import com.megathon.incidentassistant.ai.AndroidSpeechSynthesizer
 import com.megathon.incidentassistant.ai.LlmBackend
+import com.megathon.incidentassistant.ai.MeloTtsSpeechSynthesizer
 import com.megathon.incidentassistant.ai.PlaceholderLlm
 import com.megathon.incidentassistant.ai.PlaceholderSpeechToText
 import com.megathon.incidentassistant.ai.SpeechSynthesizer
 import com.megathon.incidentassistant.ai.SpeechToText
+import com.megathon.incidentassistant.ai.TtsModels
 import com.megathon.incidentassistant.ai.WhisperModelsAvailable
 import com.megathon.incidentassistant.ai.WhisperSpeechToText
 import com.megathon.incidentassistant.data.InMemoryReportRepository
@@ -57,7 +59,14 @@ class AppContainer(context: Context) {
         else PlaceholderSpeechToText()
 
     val llm: LlmBackend = PlaceholderLlm()                              // TODO: on-device LLM
-    val synthesizer: SpeechSynthesizer = AndroidSpeechSynthesizer(appContext)
+
+    /**
+     * Use the real Qualcomm MeloTTS SDK when the combined model is on the device, otherwise
+     * fall back to Android's built-in TTS service.
+     */
+    val synthesizer: SpeechSynthesizer =
+        if (TtsModels.resolve(appContext) != null) MeloTtsSpeechSynthesizer(appContext)
+        else AndroidSpeechSynthesizer(appContext)
     val repository: ReportRepository = InMemoryReportRepository()
     val formSource: FormSource = HttpFormSource(AppConfig.SERVER_BASE_URL)
     val reportSubmitter: ReportSubmitter = HttpReportSubmitter(AppConfig.SERVER_BASE_URL)
