@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.util.Log
 import com.qualcomm.qti.voice.assist.whisper.sdk.Whisper
 import com.qualcomm.qti.voice.assist.whisper.sdk.WhisperResponseListener
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -106,7 +107,7 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
         }
     }
 
-    override suspend fun startListening() = sessionMutex.withLock {
+    override suspend fun startListening(): Unit = sessionMutex.withLock {
         resetUtterance()
         lastError = null
         val w = whisper ?: error("Whisper SDK not initialised (model files missing?)")

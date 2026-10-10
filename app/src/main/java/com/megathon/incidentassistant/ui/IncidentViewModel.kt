@@ -20,12 +20,12 @@ import com.megathon.incidentassistant.data.ManagedConfigIdentityProvider
 import com.megathon.incidentassistant.session.ExtractionEngine
 import com.megathon.incidentassistant.session.IdentityProvider
 import com.megathon.incidentassistant.session.IncidentSession
+import com.megathon.incidentassistant.session.ListenAfterReply
 import com.megathon.incidentassistant.session.ReplyKind
 import com.megathon.incidentassistant.session.SessionPhase
 import com.megathon.incidentassistant.session.SessionReply
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -109,6 +109,19 @@ class IncidentViewModel(
 
     private val clockFormat = DateTimeFormatter.ofPattern("HH:mm")
 
+    /** Correlates one listen → transcribe → extract → reply → speak cycle in the logs. */
+    private var turnId = 0
+
+    /**
+     * Hands-free: reopen the mic after a spoken reply — on the TTS "finished" signal, or a
+     * bounded watchdog if that signal never comes (see [ListenAfterReply]).
+     */
+    private val handsFree = ListenAfterReply(
+        scope = viewModelScope,
+        ttsFinished = container.synthesizer.utteranceFinished,
+        log = { turnLog(it) },
+    )
+
     init {
         viewModelScope.launch {
             // TTS first: its SDK sets the DSP thread parameters (128 KB stack) before any
@@ -123,10 +136,6 @@ class IncidentViewModel(
         }
         viewModelScope.launch {
             container.llm.status.collect { status -> _ui.update { it.copy(llmStatus = describe(status)) } }
-        }
-        viewModelScope.launch {
-            // Hands-free loop: the assistant finished speaking its reply → re-open the mic.
-            container.synthesizer.utteranceFinished.collect { maybeAutoListen() }
         }
         viewModelScope.launch {
             container.speechToText.partialTranscript.collect { partial ->
@@ -180,15 +189,20 @@ class IncidentViewModel(
     fun onStartRecording() {
         val state = _ui.value
         if (state.processing || state.listening || state.loadingForm || schema.fields.isEmpty()) return
+        handsFree.cancel() // a tap while a reopen is pending must not start a second recording
+        turnId += 1
+        turnLog("MICROPHONE_START")
         container.synthesizer.stop() // never talk over the user
         _ui.update { it.copy(listening = true, transcriptReady = false, partial = "", status = str(R.string.status_listening)) }
         pushWidget(str(R.string.widget_status_listening))
         viewModelScope.launch {
             try {
                 container.speechToText.startListening()
+                turnLog("MICROPHONE_READY")
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                turnLog("MICROPHONE_FAILURE ${e.javaClass.simpleName}")
                 fail() // e.g. ASR model files missing: surface it instead of crashing
             }
         }
@@ -216,6 +230,7 @@ class IncidentViewModel(
         viewModelScope.launch {
             try {
                 val trimmed = container.speechToText.stopListening().trim()
+                turnLog(if (trimmed.isEmpty()) "ASR_EMPTY" else "ASR_SUCCESS chars=${trimmed.length}")
                 if (trimmed.isEmpty()) {
                     _ui.update {
                         it.copy(transcript = "", transcriptReady = true, status = str(R.string.rec_empty))
@@ -238,6 +253,7 @@ class IncidentViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                turnLog("ASR_FAILURE ${e.javaClass.simpleName}")
                 fail()
             }
         }
@@ -313,7 +329,14 @@ class IncidentViewModel(
                 submittedId = reply.reportId ?: it.submittedId,
             )
         }
-        speakPrompt(reply.speech)
+        turnLog("FOLLOWUP_READY phase=${reply.phase} kind=${reply.kind} pending=${reply.pendingFieldIds.size}")
+        // Speak, then reopen the mic only if the reply expects an answer.
+        handsFree.afterReply(
+            text = reply.speech,
+            listenAfter = open && reply.kind != ReplyKind.INFO,
+            speak = { speakPrompt(reply.speech) },
+            onReady = ::maybeAutoListen,
+        )
         when (reply.phase) {
             SessionPhase.SUBMITTED -> pushWidget(
                 str(R.string.widget_status_done) + " " + ZonedDateTime.now().format(clockFormat),
@@ -394,6 +417,7 @@ class IncidentViewModel(
 
     private fun resetDraft(stopSpeech: Boolean) {
         if (stopSpeech) container.synthesizer.stop()
+        handsFree.cancel()
         autoStopJob?.cancel()
         autoStopJob = null
         session = newSession(schema) // an in-flight turn of the old draft is dropped in process()
@@ -456,15 +480,14 @@ class IncidentViewModel(
      * Speak only if the user wants it AND no screen reader is active.
      * TalkBack already reads the live-region status, and two voices at once is unusable.
      */
-    private fun speakPrompt(text: String) {
-        if (_ui.value.speakPrompts && !screenReaderActive()) safeSpeak(text)
-    }
+    private fun speakPrompt(text: String): Boolean =
+        _ui.value.speakPrompts && !screenReaderActive() && safeSpeak(text)
 
     /** TTS is complementary output: a speaking failure must never break the flow. */
-    private fun safeSpeak(text: String) {
+    private fun safeSpeak(text: String): Boolean =
         runCatching { container.synthesizer.speak(text) }
-            .onFailure { Log.w(TAG, "tts speak failed: ${it.message}") }
-    }
+            .onFailure { turnLog("TTS_FAILURE ${it.javaClass.simpleName}") }
+            .isSuccess
 
     /** Isolates one warm-up stage so a failure never blocks the rest of the pipeline. */
     private suspend fun safePrepare(stage: String, block: suspend () -> Unit) {
@@ -481,25 +504,23 @@ class IncidentViewModel(
     private fun pushWidget(status: String) = IncidentWidget.pushStatus(appContext, status)
 
     /**
-     * Hands-free loop: after the assistant's reply finished playing, listen again for the
-     * answer — but only while a question is pending (the final "filed" message stops the
-     * loop). The settle delay keeps the speaker tail out of the microphone.
+     * Hands-free loop: called by [handsFree] once the reply has been spoken (and the speaker
+     * has settled) — listen again for the answer, but only while a question is still
+     * pending and nothing else has taken over the screen meanwhile.
      */
     private fun maybeAutoListen() {
         val state = _ui.value
         if (state.step != Step.CAPTURE || state.loadingForm || state.processing ||
             state.listening || state.followUpQuestion == null
         ) {
+            turnLog("UNEXPECTED_STATE no_reopen step=${state.step} processing=${state.processing} listening=${state.listening}")
             return
         }
-        viewModelScope.launch {
-            delay(AUTO_LISTEN_SETTLE_MS)
-            val now = _ui.value
-            if (now.step == Step.CAPTURE && !now.loadingForm && !now.processing && !now.listening) {
-                onStartRecording()
-            }
-        }
+        onStartRecording()
     }
+
+    /** Turn-correlated lifecycle events; never transcripts or field values. */
+    private fun turnLog(event: String) = Log.i(TURN_TAG, "turn=$turnId $event")
 
     private fun screenReaderActive(): Boolean {
         val manager = appContext.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
@@ -509,6 +530,7 @@ class IncidentViewModel(
     private fun str(resId: Int, vararg args: Any): String = appContext.getString(resId, *args)
 
     override fun onCleared() {
+        handsFree.cancel()
         autoStopJob?.cancel()
         container.synthesizer.stop()
         container.speechToText.release()
@@ -517,9 +539,7 @@ class IncidentViewModel(
 
     private companion object {
         const val TAG = "IncidentVM"
-
-        /** Speaker drain time before the hands-free loop re-opens the mic. */
-        const val AUTO_LISTEN_SETTLE_MS = 400L
+        const val TURN_TAG = "IncidentTurn"
     }
 }
 
