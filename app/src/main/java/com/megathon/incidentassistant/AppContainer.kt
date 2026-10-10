@@ -14,27 +14,28 @@ import com.megathon.incidentassistant.ai.WhisperModelsAvailable
 import com.megathon.incidentassistant.ai.WhisperSpeechToText
 import com.megathon.incidentassistant.data.InMemoryReportRepository
 import com.megathon.incidentassistant.data.ReportRepository
+import com.megathon.incidentassistant.net.BundledFormSource
 import com.megathon.incidentassistant.net.FormSource
 import com.megathon.incidentassistant.net.HttpFormSource
 import com.megathon.incidentassistant.net.HttpReportSubmitter
 import com.megathon.incidentassistant.net.ReportSubmitter
 
 object AppConfig {
-    /**
-     * Hides the "demo mode" banner while the LLM stage is still a placeholder. ASR is
-     * already real (Qualcomm Whisper SDK) as soon as the model files exist on the device —
-     * see `ai/WhisperModels` and `scripts/push-whisper-models.sh`.
-     */
+    /** Hides the "demo mode" banner while the LLM stage is still a placeholder. ASR is
+     * already real (Qualcomm Whisper SDK) as soon as the model files exist on the device. */
     const val USING_PLACEHOLDER_MODELS = true
 
     /**
-     * Base URL of the server that serves form definitions and receives reports
-     * (contract: docs/PROXY_API.md). The app is a pure client and bundles **no forms**:
-     * it fetches the definition at start/refresh, so this must point at a reachable
-     * server (run `tools/mock_proxy.py` while developing). Examples:
-     *   10.0.2.2:8787 (emulator) · 192.168.x.x:8787 (LAN) · 127.0.0.1:8787 with
-     *   `adb reverse tcp:8787 tcp:8787` (USB-connected device).
-     * Blank → the form cannot load; the UI shows an error until a refresh succeeds.
+     * Server that serves form definitions and receives reports (contract:
+     * docs/PROXY_API.md). **Optional.**
+     *
+     * Blank (default): the bundled sample form (`assets/forms/incident_report.json`) is
+     * auto-loaded and the app works fully offline — no server needed for the demo.
+     *
+     * Set it to use a live or mock server, e.g.:
+     *   http://127.0.0.1:8787  (device with `adb reverse tcp:8787 tcp:8787`, mock running)
+     *   http://10.0.2.2:8787   (emulator)
+     * If the server is unreachable, the sample form is used instead.
      */
     const val SERVER_BASE_URL = ""
 
@@ -68,7 +69,11 @@ class AppContainer(context: Context) {
         if (TtsModels.resolve(appContext) != null) MeloTtsSpeechSynthesizer(appContext)
         else AndroidSpeechSynthesizer(appContext)
     val repository: ReportRepository = InMemoryReportRepository()
-    val formSource: FormSource = HttpFormSource(AppConfig.SERVER_BASE_URL)
+
+    /** Bundled sample by default; the server (when configured) replaces it. */
+    val formSource: FormSource =
+        HttpFormSource(AppConfig.SERVER_BASE_URL, BundledFormSource(appContext))
+
     val reportSubmitter: ReportSubmitter = HttpReportSubmitter(AppConfig.SERVER_BASE_URL)
 
     /** For logging / UI: which ASR implementation is actually wired up. */

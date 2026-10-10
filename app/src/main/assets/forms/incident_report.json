@@ -1,0 +1,146 @@
+{
+  "id": "incident_report",
+  "title": "Incident Report",
+  "version": "1.0",
+  "fields": [
+    {
+      "id": "reported_by",
+      "label": "Reported By",
+      "type": "text",
+      "required": true,
+      "question": "Who is reporting this incident?",
+      "keywords": ["reported by", "my name is", "this is"]
+    },
+    {
+      "id": "incident_type",
+      "label": "Incident Type",
+      "type": "enum",
+      "required": true,
+      "question": "What kind of incident is it?",
+      "keywords": ["incident type", "kind of incident", "what happened"],
+      "options": [
+        { "value": "water_leak", "label": "Water leak", "aliases": ["leak", "flood", "pipe burst", "water damage"] },
+        { "value": "fire", "label": "Fire", "aliases": ["smoke", "burning"] },
+        { "value": "electrical", "label": "Electrical", "aliases": ["power", "short circuit", "sparking"] },
+        { "value": "chemical_spill", "label": "Chemical spill", "aliases": ["spill", "hazardous material"] },
+        { "value": "equipment_failure", "label": "Equipment failure", "aliases": ["machine down", "broken"] },
+        { "value": "slip_trip_fall", "label": "Slip / trip / fall", "aliases": ["slipped", "tripped", "fell"] },
+        { "value": "security", "label": "Security", "aliases": ["theft", "intruder"] },
+        { "value": "medical", "label": "Medical", "aliases": ["injury", "hurt"] },
+        { "value": "other", "label": "Other", "aliases": [] }
+      ]
+    },
+    {
+      "id": "severity",
+      "label": "Severity",
+      "type": "enum",
+      "required": true,
+      "question": "How severe is it — low, medium, high, or critical?",
+      "keywords": ["how severe", "severity"],
+      "options": [
+        { "value": "low", "label": "Low", "aliases": ["minor", "slight", "not serious"] },
+        { "value": "medium", "label": "Medium", "aliases": ["moderate"] },
+        { "value": "high", "label": "High", "aliases": ["major", "serious", "severe"] },
+        { "value": "critical", "label": "Critical", "aliases": ["emergency", "urgent", "life threatening"] }
+      ]
+    },
+    {
+      "id": "location",
+      "label": "Location",
+      "type": "text",
+      "required": true,
+      "question": "Where did it happen?",
+      "keywords": ["where", "area", "near", "floor", "zone"]
+    },
+    {
+      "id": "occurred_at",
+      "label": "Date & Time",
+      "type": "datetime",
+      "required": true,
+      "question": "When did it happen, even approximately?",
+      "keywords": ["when did", "happened at", "around", "yesterday", "this morning"]
+    },
+    {
+      "id": "description",
+      "label": "Description",
+      "type": "textarea",
+      "required": true,
+      "question": "Describe what happened, step by step if you can."
+    },
+    {
+      "id": "immediate_actions",
+      "label": "Immediate Actions Taken",
+      "type": "textarea",
+      "required": true,
+      "question": "What has been done so far to handle it?",
+      "keywords": ["isolated", "secured", "first aid", "notified", "called"]
+    },
+    {
+      "id": "persons_involved",
+      "label": "Persons Involved",
+      "type": "string_list",
+      "required": false,
+      "ask_once": true,
+      "group": "people",
+      "keywords": ["who was involved", "people involved"]
+    },
+    {
+      "id": "witnesses",
+      "label": "Witness Information",
+      "type": "string_list",
+      "required": false,
+      "ask_once": true,
+      "group": "people",
+      "keywords": ["witness", "saw it"]
+    },
+    {
+      "id": "equipment_involved",
+      "label": "Equipment / Asset Involved",
+      "type": "string_list",
+      "required": false,
+      "ask_once": true,
+      "group": "followup",
+      "keywords": ["equipment", "asset", "machine"]
+    },
+    {
+      "id": "recommended_actions",
+      "label": "Recommended Follow-up",
+      "type": "textarea",
+      "required": false,
+      "ask_once": true,
+      "group": "followup",
+      "keywords": ["follow up", "prevent", "recommend"]
+    },
+    {
+      "id": "action_status",
+      "label": "Current Action Status",
+      "type": "enum",
+      "required": false,
+      "ask_once": true,
+      "group": "followup",
+      "default": "open",
+      "options": [
+        { "value": "open", "label": "Open", "aliases": [] },
+        { "value": "in_progress", "label": "In progress", "aliases": ["being handled", "ongoing"] },
+        { "value": "monitoring", "label": "Monitoring", "aliases": ["watching"] },
+        { "value": "resolved", "label": "Resolved", "aliases": ["fixed", "closed", "done"] }
+      ]
+    }
+  ],
+  "question_groups": [
+    {
+      "id": "people",
+      "prompt": "Were any other people involved, or any witnesses you'd like to note?"
+    },
+    {
+      "id": "followup",
+      "prompt": "Was any equipment or asset involved, any follow-up actions you'd recommend, and is the situation still open, in progress, monitoring, or resolved?"
+    }
+  ],
+  "behavior": {
+    "ask_optional_once": true,
+    "optional_mode": "combined",
+    "confirm_before_submit": true,
+    "allow_unknown_required": true
+  }
+}

@@ -41,8 +41,8 @@
     <string name="status_empty_input">Please say or type something first.</string>
     <string name="status_error">Something went wrong while processing. Please try again.</string>
     <string name="status_loading_form">Loading the report form…</string>
-    <string name="status_form_error">Could not load the report form from the server. Check the server URL, then tap Refresh form.</string>
-    <string name="status_submitted_local">Report %1$s saved on this device. The proxy did not accept it yet; it will be retried.</string>
+    <string name="status_form_error">Could not load the report form on this device.</string>
+    <string name="status_submitted_local">Report %1$s saved on this device. Set a server (SERVER_BASE_URL) to deliver it.</string>
     <string name="ask_default">What is the %1$s?</string>
     <string name="status_add_more">Add more details by voice or text.</string>
     <string name="status_missing_submit">Cannot submit yet. Missing required fields: %1$s.</string>
