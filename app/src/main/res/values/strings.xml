@@ -15,17 +15,13 @@
     <string name="rec_start">Start recording</string>
     <string name="rec_stop">Stop and send</string>
     <string name="rec_rerecord">Re-record</string>
-    <string name="rec_continue">Continue</string>
     <string name="rec_listening">What I hear:</string>
     <string name="rec_hear_hint">Listening — speak now</string>
-    <string name="rec_transcript_label">Transcript</string>
-    <string name="rec_transcript_hint">Fix any mistakes — this text goes to the assistant.</string>
     <string name="rec_intro">Tap the mic and describe what happened.</string>
     <string name="type_toggle_show">Type instead</string>
     <string name="type_toggle_hide">Hide typing</string>
     <string name="rec_empty">I didn\'t hear anything — re-record or type it.</string>
     <string name="rec_you_said">You said: “%1$s”</string>
-    <string name="mic_busy_label">Working, please wait</string>
     <string name="mic_state_idle">Not recording</string>
     <string name="type_label">Or type your report</string>
     <string name="type_answer_label">Type your answer</string>

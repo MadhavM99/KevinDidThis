@@ -230,7 +230,13 @@ private fun CaptionArea(state: UiState, vm: IncidentViewModel) {
                 .semantics { liveRegion = LiveRegionMode.Polite },
         )
 
-        state.transcriptReady -> TranscriptReview(state, vm)
+        state.transcriptReady -> Text(
+            text = stringResource(R.string.rec_empty),
+            style = MaterialTheme.typography.bodyLarge,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.fillMaxWidth(),
+        )
 
         state.processing && state.transcript.isNotBlank() -> Text(
             text = stringResource(R.string.rec_you_said, state.transcript),
@@ -260,32 +266,6 @@ private fun CaptionArea(state: UiState, vm: IncidentViewModel) {
     }
 }
 
-/** Review + fix the ASR text before it reaches the LLM. */
-@Composable
-private fun TranscriptReview(state: UiState, vm: IncidentViewModel) {
-    Column(
-        Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        OutlinedTextField(
-            value = state.transcript,
-            onValueChange = vm::onTranscriptChange,
-            label = { Text(stringResource(R.string.rec_transcript_label)) },
-            supportingText = { Text(stringResource(R.string.rec_transcript_hint)) },
-            minLines = 4,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        if (state.transcript.isBlank()) {
-            Text(
-                stringResource(R.string.rec_empty),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-    }
-}
-
 // ---------- voice-first pills ----------
 
 @Composable
@@ -298,20 +278,12 @@ private fun RecorderPills(state: UiState, vm: IncidentViewModel) {
             destructive = true,
         )
 
-        state.transcriptReady -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            PillButton(
-                onClick = vm::onReRecord,
-                icon = { Icon(Icons.Filled.Replay, contentDescription = null) },
-                label = stringResource(R.string.rec_rerecord),
-                outlined = true,
-            )
-            PillButton(
-                onClick = vm::onUseTranscript,
-                icon = { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null) },
-                label = stringResource(R.string.rec_continue),
-                enabled = state.transcript.isNotBlank(),
-            )
-        }
+        state.transcriptReady -> PillButton(
+            onClick = vm::onReRecord,
+            icon = { Icon(Icons.Filled.Replay, contentDescription = null) },
+            label = stringResource(R.string.rec_rerecord),
+            outlined = true,
+        )
     }
 }
 

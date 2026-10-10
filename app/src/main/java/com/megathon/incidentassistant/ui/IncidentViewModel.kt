@@ -110,11 +110,12 @@ class IncidentViewModel(
             // TTS first: its SDK sets the DSP thread parameters (128 KB stack) before any
             // other FastRPC user creates the process threads — see MeloTtsSpeechSynthesizer.
             // Then ASR (Whisper.init() registers its model dir on the DSP library search
-            // path, where Gemma's Hexagon backend finds libggml-htp-vXX.so), then the LLM,
-            // once each, off the main thread inside the backends.
-            container.synthesizer.prepare()
-            container.speechToText.prepare()
-            container.llm.prepare()
+            // path, where Gemma's Hexagon backend finds libggml-htp-vXX.so), then the LLM.
+            // Each stage is isolated: a TTS (or any) warm-up failure must never block the
+            // rest of the pipeline — TTS is complementary output, not the flow.
+            safePrepare("tts") { container.synthesizer.prepare() }
+            safePrepare("asr") { container.speechToText.prepare() }
+            safePrepare("llm") { container.llm.prepare() }
         }
         viewModelScope.launch {
             container.llm.status.collect { status -> _ui.update { it.copy(llmStatus = describe(status)) } }
@@ -249,28 +250,6 @@ class IncidentViewModel(
     /** The user is fixing the ASR text before it reaches the LLM. */
     fun onTranscriptChange(text: String) = _ui.update { it.copy(transcript = text) }
 
-    /** Send the reviewed transcript into the extraction pipeline. */
-    fun onUseTranscript() {
-        val state = _ui.value
-        if (state.processing || state.listening) return
-        val text = state.transcript.trim()
-        if (text.isEmpty()) {
-            setStatus(R.string.status_empty_input, speak = false)
-            return
-        }
-        _ui.update { it.copy(transcriptReady = false, processing = true, status = str(R.string.status_processing)) }
-        pushWidget(str(R.string.widget_status_working))
-        viewModelScope.launch {
-            try {
-                process(text)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                fail()
-            }
-        }
-    }
-
     fun onTypedTextChange(text: String) = _ui.update { it.copy(typedText = text) }
 
     /** Fallback entry without the microphone: type the whole utterance. */
@@ -339,7 +318,7 @@ class IncidentViewModel(
     }
 
     fun onRepeatQuestion() {
-        _ui.value.followUpQuestion?.let { container.synthesizer.speak(it) }
+        _ui.value.followUpQuestion?.let { safeSpeak(it) }
     }
 
     fun onSkipToReview() {
@@ -385,7 +364,7 @@ class IncidentViewModel(
                     displayValue(field, form.text(field.id)),
                 )
             }
-        if (parts.isNotEmpty()) container.synthesizer.speak(parts.joinToString(" "))
+        if (parts.isNotEmpty()) safeSpeak(parts.joinToString(" "))
     }
 
     /** Review-screen Submit: the tap is the user's explicit confirmation; the gate still applies. */
@@ -471,7 +450,24 @@ class IncidentViewModel(
      * TalkBack already reads the live-region status, and two voices at once is unusable.
      */
     private fun speakPrompt(text: String) {
-        if (_ui.value.speakPrompts && !screenReaderActive()) container.synthesizer.speak(text)
+        if (_ui.value.speakPrompts && !screenReaderActive()) safeSpeak(text)
+    }
+
+    /** TTS is complementary output: a speaking failure must never break the flow. */
+    private fun safeSpeak(text: String) {
+        runCatching { container.synthesizer.speak(text) }
+            .onFailure { Log.w(TAG, "tts speak failed: ${it.message}") }
+    }
+
+    /** Isolates one warm-up stage so a failure never blocks the rest of the pipeline. */
+    private suspend fun safePrepare(stage: String, block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "$stage warm-up failed: ${e.message}")
+        }
     }
 
     /** Mirrors the assistant state on the home-screen widget. */

@@ -90,8 +90,14 @@ class MeloTtsSpeechSynthesizer(context: Context) : SpeechSynthesizer {
         }
         speaking = true
         worker.post {
-            ensureInit(model)
-            tts?.start(text)
+            try {
+                ensureInit(model)
+                tts?.start(text)
+            } catch (e: Throwable) {
+                // TTS is complementary: an engine failure must never crash the flow.
+                speaking = false
+                Log.e(TAG, "speak failed: ${e.message}")
+            }
         }
     }
 
