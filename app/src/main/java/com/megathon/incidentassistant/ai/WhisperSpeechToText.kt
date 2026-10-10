@@ -15,6 +15,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.InputStream
@@ -63,43 +65,76 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
     private var lastError: Int? = null
     private var ready = false
 
+    /** Serialises start/stop so two sessions can never interleave their mic streams. */
+    private val sessionMutex = Mutex()
+
+    /** True while a `start()` session is open and not yet closed by the SDK. */
+    @Volatile private var sessionActive = false
+
+    /** Serialises [prepare]; the native engine must be created exactly once per process. */
+    private val initMutex = Mutex()
+    private var initDone = false
+
     // ---------- SpeechToText ----------
 
-    override suspend fun prepare() = withContext(Dispatchers.Default) {
-        val modelDir = resolveModelDir()
-        val w = Whisper.newInstance()
-        w.setListener(listener)
-        w.enablePartialTranscriptions(true)
-        w.enableContinuousTranscription(false) // one utterance per tap, as the UI expects
-        w.showProgressIndicators(false)
-        w.setNoStartSpeechTimeout(NO_SPEECH_TIMEOUT_MS)
-        w.setEndOfSpeechTimeoutMs(END_OF_SPEECH_TIMEOUT_MS)
-        w.setPartialBufferMs(PARTIAL_BUFFER_MS)
-        w.setAILogLevel(Whisper.LOG_LEVEL_WARN)
+    override suspend fun prepare() {
+        initMutex.withLock {
+            if (initDone) return@withLock
+            initDone = true
+            withContext(Dispatchers.Default) {
+                val modelDir = resolveModelDir()
+                val w = Whisper.newInstance()
+                w.setListener(listener)
+                w.enablePartialTranscriptions(true)
+                w.enableContinuousTranscription(false) // one utterance per tap, as the UI expects
+                w.showProgressIndicators(false)
+                w.setNoStartSpeechTimeout(NO_SPEECH_TIMEOUT_MS)
+                w.setEndOfSpeechTimeoutMs(END_OF_SPEECH_TIMEOUT_MS)
+                w.setPartialBufferMs(PARTIAL_BUFFER_MS)
+                w.setAILogLevel(Whisper.LOG_LEVEL_WARN)
 
-        val rc = w.init(modelDir)
-        if (rc == Whisper.NO_ERROR) {
-            whisper = w
-            ready = true
-            Log.i(TAG, "whisper ready, modelDir=$modelDir version=${w.version}")
-        } else {
-            Log.e(TAG, "whisper.init failed rc=$rc modelDir=$modelDir")
-            w.deInit()
+                val rc = w.init(modelDir)
+                if (rc == Whisper.NO_ERROR) {
+                    whisper = w
+                    ready = true
+                    Log.i(TAG, "whisper ready, modelDir=$modelDir version=${w.version}")
+                } else {
+                    Log.e(TAG, "whisper.init failed rc=$rc modelDir=$modelDir")
+                    w.deInit()
+                }
+            }
         }
-        Unit
     }
 
-    override suspend fun startListening() {
+    override suspend fun startListening() = sessionMutex.withLock {
         resetUtterance()
         lastError = null
         val w = whisper ?: error("Whisper SDK not initialised (model files missing?)")
 
+        // The SDK closes every session with stop() and a new start() while the previous
+        // session is still open is silently ignored (listening UI, no transcription —
+        // seen with successive questions). The QIDK sample calls stop() from onFinished;
+        // this guard also covers forced stops and flushes that timed out.
+        if (sessionActive) {
+            Log.d(TAG, "closing previous session before restart")
+            runCatching { w.stop() }
+        }
+
         val mic = MicInputStream().also { it.start() }
         audio = mic
-        withContext(Dispatchers.Main) { w.start(mic) }
+        sessionActive = true
+        try {
+            withContext(Dispatchers.Main) { w.start(mic) }
+            Log.d(TAG, "whisper.start ok")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "whisper.start failed: ${e.message}")
+            sessionActive = false
+        }
     }
 
-    override suspend fun stopListening(): String {
+    override suspend fun stopListening(): String = sessionMutex.withLock {
         val w = whisper ?: throw IllegalStateException("ASR unavailable")
 
         // Let the VAD see the end of the utterance: swap mic audio for silence and wait for
@@ -116,20 +151,22 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
 
         audio?.release()
         audio = null
+        sessionActive = false
 
         val text = finalText.toString().trim()
         if (lastError == WhisperResponseListener.NO_SPEECH_TIMEOUT && text.isEmpty()) {
             throw NoSpeechException("no speech detected")
         }
-        return text
+        text
     }
 
     override fun release() {
+        // The Whisper SDK's native engine is process-scoped: a new init after deInit() is
+        // observed to SIGSEGV inside WhisperLib::init (Android 14 / QIDK tombstone, same
+        // process re-entering the screen). This backend is a singleton in [AppContainer],
+        // so keep the initialised engine and only stop the microphone stream.
         runCatching { audio?.release() }
         audio = null
-        runCatching { whisper?.deInit() }
-        whisper = null
-        ready = false
     }
 
     /** True when the SDK initialised successfully with real model files on disk. */
@@ -180,6 +217,10 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
             Log.d(TAG, "onFinished")
             if (!finished.isCompleted) finished.complete(Unit)
             completed.tryEmit(Unit) // single-shot: the pipeline may now stop + process
+            // Sample parity (Whisper_ASR.java): the SDK expects stop() after a finished
+            // session, otherwise the next start() is ignored. Safe after flush.
+            runCatching { whisper?.stop() }
+            sessionActive = false
         }
     }
 

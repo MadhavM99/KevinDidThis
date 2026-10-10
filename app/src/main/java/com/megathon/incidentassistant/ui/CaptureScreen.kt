@@ -155,8 +155,6 @@ private fun WaveformStage(state: UiState, onStartRecording: () -> Unit) {
             state.processing -> CircularProgressIndicator(Modifier.size(72.dp))
 
             else -> {
-                // Resolved here: stringResource is @Composable, the semantics lambda is not.
-                val idleDescription = stringResource(R.string.mic_state_idle)
                 val pulse = rememberInfiniteTransition(label = "idle")
                 val glow by pulse.animateFloat(
                     initialValue = 0.10f,
@@ -164,6 +162,7 @@ private fun WaveformStage(state: UiState, onStartRecording: () -> Unit) {
                     animationSpec = infiniteRepeatable(tween(1500), RepeatMode.Reverse),
                     label = "glow",
                 )
+                val micStateIdle = stringResource(R.string.mic_state_idle)
                 Box(
                     Modifier
                         .size(160.dp)
@@ -178,7 +177,7 @@ private fun WaveformStage(state: UiState, onStartRecording: () -> Unit) {
                     contentPadding = PaddingValues(0.dp),
                     modifier = Modifier
                         .size(120.dp)
-                        .semantics { stateDescription = idleDescription },
+                        .semantics { stateDescription = micStateIdle },
                 ) {
                     Icon(
                         Icons.Filled.Mic,
@@ -231,7 +230,21 @@ private fun CaptionArea(state: UiState, vm: IncidentViewModel) {
                 .semantics { liveRegion = LiveRegionMode.Polite },
         )
 
-        state.transcriptReady -> TranscriptReview(state, vm)
+        state.transcriptReady -> Text(
+            text = stringResource(R.string.rec_empty),
+            style = MaterialTheme.typography.bodyLarge,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        state.processing && state.transcript.isNotBlank() -> Text(
+            text = stringResource(R.string.rec_you_said, state.transcript),
+            style = MaterialTheme.typography.bodyLarge,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.fillMaxWidth(),
+        )
 
         state.llmStatus.isNotBlank() -> Text(
             text = state.llmStatus,
@@ -253,32 +266,6 @@ private fun CaptionArea(state: UiState, vm: IncidentViewModel) {
     }
 }
 
-/** Review + fix the ASR text before it reaches the LLM. */
-@Composable
-private fun TranscriptReview(state: UiState, vm: IncidentViewModel) {
-    Column(
-        Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        OutlinedTextField(
-            value = state.transcript,
-            onValueChange = vm::onTranscriptChange,
-            label = { Text(stringResource(R.string.rec_transcript_label)) },
-            supportingText = { Text(stringResource(R.string.rec_transcript_hint)) },
-            minLines = 4,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        if (state.transcript.isBlank()) {
-            Text(
-                stringResource(R.string.rec_empty),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-    }
-}
-
 // ---------- voice-first pills ----------
 
 @Composable
@@ -291,20 +278,12 @@ private fun RecorderPills(state: UiState, vm: IncidentViewModel) {
             destructive = true,
         )
 
-        state.transcriptReady -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            PillButton(
-                onClick = vm::onReRecord,
-                icon = { Icon(Icons.Filled.Replay, contentDescription = null) },
-                label = stringResource(R.string.rec_rerecord),
-                outlined = true,
-            )
-            PillButton(
-                onClick = vm::onUseTranscript,
-                icon = { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null) },
-                label = stringResource(R.string.rec_continue),
-                enabled = state.transcript.isNotBlank(),
-            )
-        }
+        state.transcriptReady -> PillButton(
+            onClick = vm::onReRecord,
+            icon = { Icon(Icons.Filled.Replay, contentDescription = null) },
+            label = stringResource(R.string.rec_rerecord),
+            outlined = true,
+        )
     }
 }
 
@@ -379,16 +358,6 @@ private fun LowerControls(state: UiState, vm: IncidentViewModel) {
         enabled = !state.processing && !state.listening && !state.loadingForm,
         modifier = Modifier.heightIn(min = MinTouch),
     ) { Text(stringResource(R.string.refresh_form)) }
-
-    if (state.usingPlaceholderLlm) {
-        Text(
-            text = stringResource(R.string.placeholder_banner),
-            style = MaterialTheme.typography.bodySmall,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
 }
 
 /** Siri-style status pill with a pulsing dot while the assistant is listening/working.

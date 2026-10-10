@@ -9,6 +9,10 @@ import android.os.HandlerThread
 import android.util.Log
 import com.qualcomm.qti.voice.assist.tts.sdk.TTS
 import com.qualcomm.qti.voice.assist.tts.sdk.TTSResultCallback
+import com.qualcomm.tts.TTSNative
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 
 /**
  * On-device TTS backed by the Qualcomm **VoiceAI TTS** SDK (MeloTTS English).
@@ -46,7 +50,36 @@ class MeloTtsSpeechSynthesizer(context: Context) : SpeechSynthesizer {
     @Volatile private var track: AudioTrack? = null
     @Volatile private var speaking = false
 
+    /** A failed init is not retried: repeated native init attempts can crash the process. */
+    @Volatile private var initFailed = false
+
+    /** Emits when a reply finished playing, for the hands-free loop. */
+    private val _utteranceFinished = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    override val utteranceFinished: Flow<Unit> = _utteranceFinished
+
     private val modelFile: String? = TtsModels.resolve(appContext)
+
+    /**
+     * Loads the engine once at start-up, like the other backends. This also matters for
+     * correctness: the SDK asks FastRPC for a 128 KB DSP thread stack in `init()`, which
+     * must happen before any other FastRPC user (Whisper/Gemma) brings the process up with
+     * the default small stack — otherwise `tts_get`'s 40 KB local overflows it at init.
+     */
+    override suspend fun prepare() {
+        val model = modelFile ?: run {
+            Log.e(TAG, "no MeloTTS model on device - ${TtsModels.describe(appContext)}")
+            return
+        }
+        val done = CompletableDeferred<Unit>()
+        worker.post {
+            try {
+                ensureInit(model)
+            } finally {
+                done.complete(Unit)
+            }
+        }
+        done.await()
+    }
 
     override fun speak(text: String) {
         if (text.isBlank()) return
@@ -57,8 +90,14 @@ class MeloTtsSpeechSynthesizer(context: Context) : SpeechSynthesizer {
         }
         speaking = true
         worker.post {
-            ensureInit(model)
-            tts?.start(text)
+            try {
+                ensureInit(model)
+                tts?.start(text)
+            } catch (e: Throwable) {
+                // TTS is complementary: an engine failure must never crash the flow.
+                speaking = false
+                Log.e(TAG, "speak failed: ${e.message}")
+            }
         }
     }
 
@@ -84,7 +123,7 @@ class MeloTtsSpeechSynthesizer(context: Context) : SpeechSynthesizer {
     // ---------- lifecycle ----------
 
     private fun ensureInit(modelPath: String) {
-        if (tts != null) return
+        if (tts != null || initFailed) return
         val dir = TtsModels.dirOf(modelPath)
         val t = TTS.newInstance(callback)
         t.setLanguage("English")
@@ -96,6 +135,14 @@ class MeloTtsSpeechSynthesizer(context: Context) : SpeechSynthesizer {
         t.setSampleRate("44100")
         t.setSkelLibPath(dir)
         t.init()
+        // `init()` is void and logs its own error code: the state is the only reliable
+        // success signal. A failed init (e.g. DSP crash) leaves IDLE, and calling start()
+        // on it would be rejected ("status is not INIT or START").
+        if (t.state != TTSNative.TTSEngineState.INIT) {
+            Log.e(TAG, "melo tts init failed, state=${t.state}")
+            initFailed = true
+            return
+        }
         tts = t
         Log.i(TAG, "melo tts ready, model=$modelPath")
     }
@@ -144,11 +191,13 @@ class MeloTtsSpeechSynthesizer(context: Context) : SpeechSynthesizer {
         override fun onDone() {
             Log.d(TAG, "onDone")
             releaseTrack()
+            _utteranceFinished.tryEmit(Unit)
         }
 
         override fun onError(errorCode: Int) {
             Log.e(TAG, "tts error $errorCode")
             releaseTrack()
+            _utteranceFinished.tryEmit(Unit) // don't strand the loop on a failed reply
         }
 
         override fun onPerformanceResult(

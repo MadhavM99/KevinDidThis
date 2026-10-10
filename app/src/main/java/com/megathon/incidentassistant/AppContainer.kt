@@ -2,17 +2,12 @@ package com.megathon.incidentassistant
 
 import android.app.Application
 import android.content.Context
-import com.megathon.incidentassistant.ai.AndroidSpeechSynthesizer
 import com.megathon.incidentassistant.ai.GemmaGenieXLlm
 import com.megathon.incidentassistant.ai.GemmaModels
 import com.megathon.incidentassistant.ai.LlmBackend
 import com.megathon.incidentassistant.ai.MeloTtsSpeechSynthesizer
-import com.megathon.incidentassistant.ai.PlaceholderLlm
-import com.megathon.incidentassistant.ai.PlaceholderSpeechToText
 import com.megathon.incidentassistant.ai.SpeechSynthesizer
 import com.megathon.incidentassistant.ai.SpeechToText
-import com.megathon.incidentassistant.ai.TtsModels
-import com.megathon.incidentassistant.ai.WhisperModelsAvailable
 import com.megathon.incidentassistant.ai.WhisperSpeechToText
 import com.megathon.incidentassistant.data.InMemoryReportRepository
 import com.megathon.incidentassistant.data.ReportRepository
@@ -41,38 +36,28 @@ object AppConfig {
 }
 
 /**
- * Tiny manual dependency injection. THIS is the one place you swap placeholders for real
- * models: Whisper (SpeechToText), Genie/Qwen/Llama (LlmBackend), MeloTTS
- * (SpeechSynthesizer), plus the server endpoints.
+ * Tiny manual dependency injection. Real models only — the app must show the actual
+ * on-device pipeline, and a missing model is surfaced as a load failure (LlmStatus.Failed,
+ * an ASR init error, silence), never as a scripted placeholder:
+ *
+ *  - ASR: Qualcomm Whisper SDK on the Hexagon HTP (`scripts/push-whisper-models.sh`)
+ *  - LLM: Gemma 4 E2B through GenieX llama.cpp on the Hexagon NPU (`scripts/push-gemma-model.sh`)
+ *  - TTS: Qualcomm MeloTTS on the NPU (`scripts/push-tts-model.sh`)
+ *
+ * See docs/ASR.md, docs/LLM.md and docs/TTS.md.
  */
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
 
-    /**
-     * Use the real Qualcomm Whisper SDK when its model files are on the device, otherwise
-     * keep the placeholder so the app still runs on a phone that has never had models
-     * pushed to it (`scripts/push-whisper-models.sh`).
-     */
-    val speechToText: SpeechToText =
-        if (WhisperModelsAvailable.check(appContext)) WhisperSpeechToText(appContext)
-        else PlaceholderSpeechToText()
+    val speechToText: SpeechToText = WhisperSpeechToText(appContext)
 
-    /**
-     * Use on-device Gemma 4 E2B (GenieX llama.cpp runtime) when its GGUF is on the device
-     * (`scripts/push-gemma-model.sh`), otherwise the scripted placeholder so the app still
-     * runs end to end on a phone without the 3 GB model. See docs/LLM.md.
-     */
-    val llm: LlmBackend =
-        GemmaModels.resolve(appContext)?.let { GemmaGenieXLlm(appContext, it) }
-            ?: PlaceholderLlm()
+    /** Weights are side-loaded; a missing GGUF fails the GenieX import and shows in [llm] status. */
+    val llm: LlmBackend = GemmaGenieXLlm(
+        appContext,
+        GemmaModels.appDir(appContext) ?: appContext.filesDir.absolutePath,
+    )
 
-    /**
-     * Use the real Qualcomm MeloTTS SDK when the combined model is on the device, otherwise
-     * fall back to Android's built-in TTS service.
-     */
-    val synthesizer: SpeechSynthesizer =
-        if (TtsModels.resolve(appContext) != null) MeloTtsSpeechSynthesizer(appContext)
-        else AndroidSpeechSynthesizer(appContext)
+    val synthesizer: SpeechSynthesizer = MeloTtsSpeechSynthesizer(appContext)
     val repository: ReportRepository = InMemoryReportRepository()
 
     /** Bundled sample by default; the server (when configured) replaces it. */
@@ -80,12 +65,6 @@ class AppContainer(context: Context) {
         HttpFormSource(AppConfig.SERVER_BASE_URL, BundledFormSource(appContext))
 
     val reportSubmitter: ReportSubmitter = HttpReportSubmitter(AppConfig.SERVER_BASE_URL)
-
-    /** For logging / UI: which ASR implementation is actually wired up. */
-    val usingRealAsr: Boolean = speechToText is WhisperSpeechToText
-
-    /** Drives the "demo mode" banner: true while extraction is the scripted placeholder. */
-    val usingPlaceholderLlm: Boolean = llm is PlaceholderLlm
 }
 
 class IncidentApp : Application() {

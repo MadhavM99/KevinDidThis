@@ -25,6 +25,7 @@ import com.megathon.incidentassistant.session.SessionPhase
 import com.megathon.incidentassistant.session.SessionReply
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -58,8 +59,6 @@ data class UiState(
     val status: String = "",
     val speakPrompts: Boolean = true,
     val submittedId: String? = null,
-    /** True while extraction is the scripted placeholder (no Gemma model on the device). */
-    val usingPlaceholderLlm: Boolean = false,
     /** On-device LLM load state, shown under the controls. */
     val llmStatus: String = "",
 ) {
@@ -111,14 +110,23 @@ class IncidentViewModel(
     private val clockFormat = DateTimeFormatter.ofPattern("HH:mm")
 
     init {
-        viewModelScope.launch { container.speechToText.prepare() }
-        // Load the LLM once at start-up (off the main thread inside the backend), so the
-        // first utterance does not pay for it. The model is reused for every turn.
-        viewModelScope.launch { container.llm.prepare() }
         viewModelScope.launch {
-            container.llm.status.collect { status ->
-                _ui.update { it.copy(llmStatus = describe(status), usingPlaceholderLlm = container.usingPlaceholderLlm) }
-            }
+            // TTS first: its SDK sets the DSP thread parameters (128 KB stack) before any
+            // other FastRPC user creates the process threads — see MeloTtsSpeechSynthesizer.
+            // Then ASR (Whisper.init() registers its model dir on the DSP library search
+            // path, where Gemma's Hexagon backend finds libggml-htp-vXX.so), then the LLM.
+            // Each stage is isolated: a TTS (or any) warm-up failure must never block the
+            // rest of the pipeline — TTS is complementary output, not the flow.
+            safePrepare("tts") { container.synthesizer.prepare() }
+            safePrepare("asr") { container.speechToText.prepare() }
+            safePrepare("llm") { container.llm.prepare() }
+        }
+        viewModelScope.launch {
+            container.llm.status.collect { status -> _ui.update { it.copy(llmStatus = describe(status)) } }
+        }
+        viewModelScope.launch {
+            // Hands-free loop: the assistant finished speaking its reply → re-open the mic.
+            container.synthesizer.utteranceFinished.collect { maybeAutoListen() }
         }
         viewModelScope.launch {
             container.speechToText.partialTranscript.collect { partial ->
@@ -175,7 +183,15 @@ class IncidentViewModel(
         container.synthesizer.stop() // never talk over the user
         _ui.update { it.copy(listening = true, transcriptReady = false, partial = "", status = str(R.string.status_listening)) }
         pushWidget(str(R.string.widget_status_listening))
-        viewModelScope.launch { container.speechToText.startListening() }
+        viewModelScope.launch {
+            try {
+                container.speechToText.startListening()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fail() // e.g. ASR model files missing: surface it instead of crashing
+            }
+        }
         // VAD backends (Whisper SDK) close the utterance themselves → move to review.
         autoStopJob?.cancel()
         autoStopJob = viewModelScope.launch {
@@ -199,21 +215,31 @@ class IncidentViewModel(
         _ui.update { it.copy(listening = false) }
         viewModelScope.launch {
             try {
-                val text = container.speechToText.stopListening()
-                val trimmed = text.trim()
-                _ui.update {
-                    it.copy(
-                        transcript = trimmed,
-                        transcriptReady = true,
-                        status = str(if (trimmed.isEmpty()) R.string.rec_empty else R.string.rec_review),
-                    )
+                val trimmed = container.speechToText.stopListening().trim()
+                if (trimmed.isEmpty()) {
+                    _ui.update {
+                        it.copy(transcript = "", transcriptReady = true, status = str(R.string.rec_empty))
+                    }
+                    pushWidget(str(R.string.widget_status_ready))
+                } else {
+                    // Just-in-time: the transcript goes straight into the extraction pipeline.
+                    // It stays on screen while the model works, and the reply comes back as
+                    // text + speech.
+                    _ui.update {
+                        it.copy(
+                            transcript = trimmed,
+                            transcriptReady = false,
+                            status = str(R.string.status_processing),
+                        )
+                    }
+                    pushWidget(str(R.string.widget_status_working))
+                    process(trimmed)
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 fail()
             }
-            pushWidget(str(R.string.widget_status_ready))
         }
     }
 
@@ -227,28 +253,6 @@ class IncidentViewModel(
 
     /** The user is fixing the ASR text before it reaches the LLM. */
     fun onTranscriptChange(text: String) = _ui.update { it.copy(transcript = text) }
-
-    /** Send the reviewed transcript into the extraction pipeline. */
-    fun onUseTranscript() {
-        val state = _ui.value
-        if (state.processing || state.listening) return
-        val text = state.transcript.trim()
-        if (text.isEmpty()) {
-            setStatus(R.string.status_empty_input, speak = false)
-            return
-        }
-        _ui.update { it.copy(transcriptReady = false, processing = true, status = str(R.string.status_processing)) }
-        pushWidget(str(R.string.widget_status_working))
-        viewModelScope.launch {
-            try {
-                process(text)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                fail()
-            }
-        }
-    }
 
     fun onTypedTextChange(text: String) = _ui.update { it.copy(typedText = text) }
 
@@ -320,7 +324,7 @@ class IncidentViewModel(
     }
 
     fun onRepeatQuestion() {
-        _ui.value.followUpQuestion?.let { container.synthesizer.speak(it) }
+        _ui.value.followUpQuestion?.let { safeSpeak(it) }
     }
 
     fun onSkipToReview() {
@@ -366,7 +370,7 @@ class IncidentViewModel(
                     displayValue(field, form.text(field.id)),
                 )
             }
-        if (parts.isNotEmpty()) container.synthesizer.speak(parts.joinToString(" "))
+        if (parts.isNotEmpty()) safeSpeak(parts.joinToString(" "))
     }
 
     /** Review-screen Submit: the tap is the user's explicit confirmation; the gate still applies. */
@@ -400,7 +404,6 @@ class IncidentViewModel(
                 status = str(R.string.status_ready),
                 speakPrompts = it.speakPrompts,
                 loadingForm = false,
-                usingPlaceholderLlm = it.usingPlaceholderLlm,
                 llmStatus = it.llmStatus,
             )
         }
@@ -433,7 +436,7 @@ class IncidentViewModel(
     private fun describe(status: LlmStatus): String = when (status) {
         LlmStatus.NotLoaded -> ""
         LlmStatus.Loading -> str(R.string.llm_loading)
-        is LlmStatus.Ready -> if (container.usingPlaceholderLlm) "" else str(R.string.llm_ready, status.detail)
+        is LlmStatus.Ready -> str(R.string.llm_ready, status.detail)
         is LlmStatus.Failed -> str(R.string.model_unavailable, status.reason)
     }
 
@@ -454,11 +457,49 @@ class IncidentViewModel(
      * TalkBack already reads the live-region status, and two voices at once is unusable.
      */
     private fun speakPrompt(text: String) {
-        if (_ui.value.speakPrompts && !screenReaderActive()) container.synthesizer.speak(text)
+        if (_ui.value.speakPrompts && !screenReaderActive()) safeSpeak(text)
+    }
+
+    /** TTS is complementary output: a speaking failure must never break the flow. */
+    private fun safeSpeak(text: String) {
+        runCatching { container.synthesizer.speak(text) }
+            .onFailure { Log.w(TAG, "tts speak failed: ${it.message}") }
+    }
+
+    /** Isolates one warm-up stage so a failure never blocks the rest of the pipeline. */
+    private suspend fun safePrepare(stage: String, block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "$stage warm-up failed: ${e.message}")
+        }
     }
 
     /** Mirrors the assistant state on the home-screen widget. */
     private fun pushWidget(status: String) = IncidentWidget.pushStatus(appContext, status)
+
+    /**
+     * Hands-free loop: after the assistant's reply finished playing, listen again for the
+     * answer — but only while a question is pending (the final "filed" message stops the
+     * loop). The settle delay keeps the speaker tail out of the microphone.
+     */
+    private fun maybeAutoListen() {
+        val state = _ui.value
+        if (state.step != Step.CAPTURE || state.loadingForm || state.processing ||
+            state.listening || state.followUpQuestion == null
+        ) {
+            return
+        }
+        viewModelScope.launch {
+            delay(AUTO_LISTEN_SETTLE_MS)
+            val now = _ui.value
+            if (now.step == Step.CAPTURE && !now.loadingForm && !now.processing && !now.listening) {
+                onStartRecording()
+            }
+        }
+    }
 
     private fun screenReaderActive(): Boolean {
         val manager = appContext.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
@@ -476,6 +517,9 @@ class IncidentViewModel(
 
     private companion object {
         const val TAG = "IncidentVM"
+
+        /** Speaker drain time before the hands-free loop re-opens the mic. */
+        const val AUTO_LISTEN_SETTLE_MS = 400L
     }
 }
 

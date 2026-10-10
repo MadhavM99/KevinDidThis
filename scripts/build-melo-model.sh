@@ -21,12 +21,18 @@ OUT="${2:-$HOME/sources/qualcomm-ps/models/melotts_en_8gen3/melo_en.64_bit.qnn_v
 TTS_ROOT="${TTS_ROOT:-/opt/qcom/VoiceAI_TTS/1.1.1.0}"
 GEN="$TTS_ROOT/notebook/melo/npu/model_conversion_scripts/melo/py"
 
+# The DSP-side QNN backend the container dlopens at init. The shipped generator defaults
+# to "./libQnnHtpV81.so" (SM8850); on another SoC that dlopen fails inside melo_init
+# ("_rtld_map_object_ex: cannot open libQnnHtpV81.so"), which surfaces as a generic
+# TTS_FAIL. Match the device's Hexagon arch — same version the push script copies.
+HTP_VERSION="${HTP_VERSION:-V75}"
+
 # Values come from the AI Hub package's config.json ("runtime") / metadata.json.
 QNN_MAJOR="${QNN_MAJOR:-2}"
 QNN_MINOR="${QNN_MINOR:-50}"
 QNN_PATCH="${QNN_PATCH:-0}"
 ARCH="${ARCH:-64}"
-LANG="${LANG:-en}"
+MODEL_LANG="${MODEL_LANG:-en}"
 SCRATCH="${SCRATCH:-3200000}"
 
 for f in bert_wrapper.bin bert_en_tokenizer.bin bert_normalizer.bin \
@@ -42,6 +48,12 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 cp -r "$GEN" "$WORK/py"
 
+# Point the container at THIS SoC's HTP backend (see HTP_VERSION above).
+sed -i "s|backend_file_name = \"./libQnnHtpV[0-9]*\.so\"|backend_file_name = \"./libQnnHtp${HTP_VERSION}.so\"|" \
+  "$WORK/py/qnn_model_generation.py"
+grep -q "backend_file_name = \"./libQnnHtp${HTP_VERSION}\.so\"" "$WORK/py/qnn_model_generation.py" \
+  || { echo "failed to patch backend_file_name in qnn_model_generation.py" >&2; exit 1; }
+
 python3 "$WORK/py/qnn_model_generation.py" \
   --bert_model          "$SRC/bert_wrapper.bin" \
   --bert_tokenizer      "$SRC/bert_en_tokenizer.bin" \
@@ -55,7 +67,7 @@ python3 "$WORK/py/qnn_model_generation.py" \
   --qnn_version_minor "$QNN_MINOR" \
   --qnn_version_patch "$QNN_PATCH" \
   --arch "$ARCH" \
-  --model_lang "$LANG" \
+  --model_lang "$MODEL_LANG" \
   --scratch_mem_size_req "$SCRATCH" \
   --path_out_model "$OUT"
 
