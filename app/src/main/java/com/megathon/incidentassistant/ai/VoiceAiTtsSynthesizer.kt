@@ -15,46 +15,35 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 
 /**
- * On-device TTS backed by the Qualcomm **VoiceAI TTS** SDK running **PiperTTS-EN** on the
- * Hexagon NPU.
+ * On-device TTS backed by the Qualcomm **VoiceAI TTS** SDK (MeloTTS English).
  *
- * Qualcomm references for Piper on the NPU (not guessed):
- *   - AI Hub model card `PiperTTS-EN` (aihub.qualcomm.com/models/pipertts_en), MIT,
- *     `real-time`, "Qualcomm Voice AI" runtime — pre-exported asset on HF
- *     `qualcomm/PiperTTS-EN`. PiperTTS-DE / PiperTTS-IT exist the same way.
- *   - `qai-appbuilder` sample `pipertts_en`: "runs fully on the Snapdragon NPU (HTP)".
- *   - Qualcomm Audio Analytics container docs: "Whisper, OpusMT, MeloTTS and PiperTTS
- *     models all run on the Qualcomm NPU" — `piper-tts-en` @ 22050 Hz output.
+ * Everything here follows the shipped SDK, not guesswork:
+ *   - `melo_sdk/sampleapp/npu_rpc_android_sample/TTSSample/` (README + TTSManager.java)
+ *   - `src/npu/rpc/tts_wrapper/src/TTSImpl.cpp` / `TTSModel.cpp`
+ *   - `src/npu/rpc/android/java/.../sdk/TTS.java`
  *
- * The Voice AI TTS SDK is model-agnostic: the same `tts-sdk.jar` + `TTS` API the QIDK
- * ASR-LLM-TTS sample uses for MeloTTS serves the combined Piper `.qnn` blob, so switching
- * models changes nothing here but the file. `scripts/build-piper-model.sh` recombines the
- * AI Hub piper sub-models (T5 text encoder/decoder, VITS encoder/flow/decoder, sdp) into
- * the single file [TTS.setModelPath] requires; `scripts/push-tts-model.sh` pushes it.
- *
- * Two non-obvious things the sources pin down (same SDK as the QIDK sample):
+ * Two non-obvious things the sources pin down:
  *
  * 1. [TTS.setModelPath] takes a **single file**, not a directory. `TTSModel::loadModel`
- *    reads the entire blob into rpcmem and hands the fd to the DSP, so the sub-models must
- *    be recombined first. [TTS.setSkelLibPath] takes a directory - it is appended to
+ *    does `std::ifstream fp(model_file, std::ios::binary | std::ios::ate)` and reads the
+ *    entire blob into rpcmem, handing the fd to the DSP. AI Hub ships the 8 sub-models
+ *    separately, so `scripts/build-melo-model.sh` recombines them first.
+ *    [TTS.setSkelLibPath] is the one that takes a directory - it is appended to
  *    ADSP_LIBRARY_PATH (see TTS.java:72-82).
  *
  * 2. Audio arrives via `onAudioAvailable(byte[], offset, size)` and must be played by the
- *    caller. The format comes from `onStart(sampleRateInHz, audioFormat, channelCount)`,
- *    so the AudioTrack is created there rather than assumed (Piper produces 22050 Hz).
+ *    caller. The format comes from `onStart(sampleRateInHz, audioFormat, channelCount)`
+ *    (parameter names taken from the sample's TTSManager.java), so the AudioTrack is
+ *    created there rather than assumed - the model config says 44100 but we don't hardcode.
  *
- * Lifecycle: `init()` runs once on a worker thread at start-up (it matters for
- * correctness too: the SDK asks FastRPC for a 128 KB DSP thread stack, which must happen
- * before Whisper/Gemma bring up the process threads) and is kept alive; the guide
- * explicitly advises against calling deInit() between utterances. TTS is complementary
- * output: every failure path keeps the hands-free conversation loop alive via
- * [utteranceFinished] and never crashes the app.
+ * `init()` loads ~312 MB, so it runs once on a worker thread and is kept alive
+ * (the guide explicitly advises against calling deInit() between utterances).
  */
-class VoiceAiTtsSynthesizer(context: Context) : SpeechSynthesizer {
+class MeloTtsSpeechSynthesizer(context: Context) : SpeechSynthesizer {
 
     private val appContext = context.applicationContext
 
-    private val workerThread = HandlerThread("piper-tts").apply { start() }
+    private val workerThread = HandlerThread("melo-tts").apply { start() }
     private val worker = Handler(workerThread.looper)
 
     @Volatile private var tts: TTS? = null
@@ -82,7 +71,7 @@ class VoiceAiTtsSynthesizer(context: Context) : SpeechSynthesizer {
      */
     override suspend fun prepare() {
         val model = modelFile ?: run {
-            Log.e(TAG, "no Piper TTS model on device - ${TtsModels.describe(appContext)}")
+            Log.e(TAG, "no MeloTTS model on device - ${TtsModels.describe(appContext)}")
             return
         }
         val done = CompletableDeferred<Unit>()
@@ -100,29 +89,18 @@ class VoiceAiTtsSynthesizer(context: Context) : SpeechSynthesizer {
         if (text.isBlank()) return
         val model = modelFile
         if (model == null) {
-            Log.e(TAG, "no Piper TTS model on device - ${TtsModels.describe(appContext)}")
-            _utteranceFinished.tryEmit(Unit) // keep the hands-free loop alive, text-only
+            Log.e(TAG, "no MeloTTS model on device - ${TtsModels.describe(appContext)}")
             return
         }
         speaking = true
         worker.post {
             try {
                 ensureInit(model)
-                val engine = tts
-                if (engine == null) {
-                    // Init failed earlier (e.g. DSP crash): the reply stays text-only, but
-                    // the conversation keeps its cadence — the hands-free loop proceeds.
-                    speaking = false
-                    Log.w(TAG, "TTS engine unavailable - reply stays text-only")
-                    _utteranceFinished.tryEmit(Unit)
-                    return@post
-                }
-                engine.start(text)
+                tts?.start(text)
             } catch (e: Throwable) {
                 // TTS is complementary: an engine failure must never crash the flow.
                 speaking = false
                 Log.e(TAG, "speak failed: ${e.message}")
-                _utteranceFinished.tryEmit(Unit) // keep the hands-free loop alive
             }
         }
     }
@@ -158,19 +136,19 @@ class VoiceAiTtsSynthesizer(context: Context) : SpeechSynthesizer {
         t.setSpeechRate("1.0")
         t.setPitch("0.0")
         t.setVolumeGain("0.0")
-        t.setSampleRate(PIPER_SAMPLE_RATE)
+        t.setSampleRate("44100")
         t.setSkelLibPath(dir)
         t.init()
         // `init()` is void and logs its own error code: the state is the only reliable
         // success signal. A failed init (e.g. DSP crash) leaves IDLE, and calling start()
         // on it would be rejected ("status is not INIT or START").
         if (t.state != TTSNative.TTSEngineState.INIT) {
-            Log.e(TAG, "piper tts init failed, state=${t.state}")
+            Log.e(TAG, "melo tts init failed, state=${t.state}")
             initFailed = true
             return
         }
         tts = t
-        Log.i(TAG, "piper tts ready, model=$modelPath")
+        Log.i(TAG, "melo tts ready, model=$modelPath")
     }
 
     // ---------- SDK callbacks ----------
@@ -280,20 +258,18 @@ class VoiceAiTtsSynthesizer(context: Context) : SpeechSynthesizer {
     }
 
     private companion object {
-        const val TAG = "PiperTTS"
+        const val TAG = "MeloTTS"
         const val AUDIO_ENCODING_LINEAR16 = "0" // see TTS.AUDIO_ENCODING + guide §3.5
         const val DRAIN_POLL_MS = 20L
         const val MAX_DRAIN_MS = 60_000L // safety cap; real replies are a few seconds
-        /** Piper output rate per the Qualcomm Audio Analytics container reference. */
-        const val PIPER_SAMPLE_RATE = "22050"
     }
 }
 
-/** Locates the combined Piper TTS model on the device (built by `scripts/build-piper-model.sh`). */
+/** Locates the combined MeloTTS model file on the device. */
 object TtsModels {
 
-    private const val TAG = "PiperTTS"
-    private const val MODEL_NAME = "piper_en.64_bit.qnn_v2.50.0.qnn"
+    private const val TAG = "MeloTTS"
+    private const val MODEL_NAME = "melo_en.64_bit.qnn_v2.50.0.qnn"
 
     fun dirOf(modelFile: String): String = modelFile.substringBeforeLast('/')
 
