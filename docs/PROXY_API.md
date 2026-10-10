@@ -3,9 +3,10 @@
 The app is a **pure client**. Against the server you point it at, it makes exactly two
 kinds of request:
 
-1. **Fetch the form definition** — `GET /api/v1/forms/{id}` on every app start and
-   when the user taps **Refresh form**. The app bundles no definitions — the server is
-   the only source.
+1. **Fetch the form definition** — optional. If `AppConfig.SERVER_BASE_URL` is set, the
+   app calls `GET /api/v1/forms/{id}` on every app start and on **Refresh form**; if the
+   server is unreachable (or no URL is set) the **bundled sample form** loads instead —
+   the demo works with zero configuration, fully offline.
 2. **Submit the finished report** — `POST /api/v1/reports` when the user confirms.
 
 Form **management** — creating, editing, versioning definitions — happens on your side
@@ -17,7 +18,7 @@ Everything else (ASR, LLM, TTS) stays on-device.
 
 | | |
 |---|---|
-| Base URL | configured in `AppConfig.SERVER_BASE_URL` (blank = the app cannot load forms) |
+| Base URL | optional: `AppConfig.SERVER_BASE_URL`. Blank = the bundled sample form auto-loads (fully offline) |
 | Content type | `application/json` |
 | Auth | none in v1 — add `Authorization: Bearer <token>` if needed (one header in `net/ProxyApi.kt`) |
 | Local server | `python3 tools/mock_proxy.py` plays this role until the real one exists |
@@ -142,7 +143,8 @@ python3 tools/mock_proxy.py --port 8787
 - Mock-only conveniences, not part of the client contract: `GET /api/v1/reports` and
   `GET /api/v1/reports/{id}` to inspect submissions without opening the files.
 
-Connect the app:
+Connect the app — optional: without it the app runs on the bundled sample form. Set
+`AppConfig.SERVER_BASE_URL` to use the server:
 
 | Target | `AppConfig.SERVER_BASE_URL` |
 |---|---|
