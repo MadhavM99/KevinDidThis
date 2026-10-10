@@ -34,6 +34,23 @@
     <string name="speak_prompts_hint">Turned off automatically while a screen reader such as TalkBack is active.</string>
     <string name="refresh_form">Refresh form from server</string>
 
+    <!-- Capture screen (conversation layout) -->
+    <string name="report_new">NEW REPORT</string>
+    <string name="report_title">Report an incident</string>
+    <string name="on_device_ai">ON-DEVICE AI</string>
+    <string name="step_chip">%1$d of 3</string>
+    <string name="voice_assistant">VOICE ASSISTANT</string>
+    <string name="voice_card_idle">Tell me what happened</string>
+    <string name="voice_card_listening">Listening…</string>
+    <string name="voice_card_thinking">Understanding your report…</string>
+    <string name="voice_start">Start speaking</string>
+    <string name="extracted_heading">AI-EXTRACTED DETAILS</string>
+    <string name="extracted_title">Check the information</string>
+    <string name="extracted_subtitle">This form is built from your conversation. Fields appear or change as the assistant learns more.</string>
+    <string name="inferred_count">%1$d inferred</string>
+    <string name="extracted_empty">Fields will appear here as you talk.</string>
+    <string name="review_report">Review report</string>
+
     <!-- Status messages (announced to screen readers and optionally spoken) -->
     <string name="status_ready">Tap the mic and describe the incident — I will ask for anything missing.</string>
     <string name="status_listening">Listening</string>

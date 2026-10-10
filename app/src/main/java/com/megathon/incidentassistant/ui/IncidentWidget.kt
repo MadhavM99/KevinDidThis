@@ -12,11 +12,12 @@ import com.megathon.incidentassistant.MainActivity
 import com.megathon.incidentassistant.R
 
 /**
- * Home-screen widget — the entry point to the app.
+ * Home-screen widget — the Siri-style entry point.
  *
- * One tap opens the app; recording is button-driven there (Start → speak → Stop → review
- * the transcript → Continue). The status line mirrors what the app is doing
- * ("Listening…", "Working…", "Filed 14:32") and is pushed from the ViewModel.
+ * One tap opens the app straight into listening (MainActivity.ACTION_AUTO_LISTEN): the
+ * microphone starts as soon as the form is in, without an extra tap. The status line
+ * mirrors what the app is doing ("Listening…", "Working…", "Filed 14:32") and is pushed
+ * from the ViewModel.
  */
 class IncidentWidget : AppWidgetProvider() {
 
@@ -60,6 +61,7 @@ class IncidentWidget : AppWidgetProvider() {
                 context,
                 0,
                 Intent(context, MainActivity::class.java).apply {
+                    action = MainActivity.ACTION_AUTO_LISTEN
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or
                         Intent.FLAG_ACTIVITY_CLEAR_TOP or
                         Intent.FLAG_ACTIVITY_SINGLE_TOP

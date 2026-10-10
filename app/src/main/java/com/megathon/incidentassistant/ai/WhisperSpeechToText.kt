@@ -20,6 +20,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.io.File
 import java.io.InputStream
 
 /**
@@ -94,6 +95,16 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
                 w.setPartialBufferMs(PARTIAL_BUFFER_MS)
                 w.setAILogLevel(Whisper.LOG_LEVEL_WARN)
 
+                // Field debugging: touch DEBUG_AUDIO in the model dir to dump every captured
+                // utterance as a WAV (SDK feature; see docs/ASR.md).
+                val debugDir = File(modelDir, "debug_audio")
+                if (File(modelDir, "DEBUG_AUDIO").exists()) {
+                    debugDir.mkdirs()
+                    w.setDebugDir(debugDir)
+                    w.enableDebug(true)
+                    Log.i(TAG, "audio debug dump enabled -> $debugDir")
+                }
+
                 val rc = w.init(modelDir)
                 if (rc == Whisper.NO_ERROR) {
                     whisper = w
@@ -107,31 +118,33 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
         }
     }
 
-    override suspend fun startListening(): Unit = sessionMutex.withLock {
-        resetUtterance()
-        lastError = null
-        val w = whisper ?: error("Whisper SDK not initialised (model files missing?)")
+    override suspend fun startListening() {
+        sessionMutex.withLock {
+            resetUtterance()
+            lastError = null
+            val w = whisper ?: error("Whisper SDK not initialised (model files missing?)")
 
-        // The SDK closes every session with stop() and a new start() while the previous
-        // session is still open is silently ignored (listening UI, no transcription —
-        // seen with successive questions). The QIDK sample calls stop() from onFinished;
-        // this guard also covers forced stops and flushes that timed out.
-        if (sessionActive) {
-            Log.d(TAG, "closing previous session before restart")
-            runCatching { w.stop() }
-        }
+            // The SDK closes every session with stop() and a new start() while the previous
+            // session is still open is silently ignored (listening UI, no transcription —
+            // seen with successive questions). The QIDK sample calls stop() from onFinished;
+            // this guard also covers forced stops and flushes that timed out.
+            if (sessionActive) {
+                Log.d(TAG, "closing previous session before restart")
+                runCatching { w.stop() }
+            }
 
-        val mic = MicInputStream().also { it.start() }
-        audio = mic
-        sessionActive = true
-        try {
-            withContext(Dispatchers.Main) { w.start(mic) }
-            Log.d(TAG, "whisper.start ok")
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e(TAG, "whisper.start failed: ${e.message}")
-            sessionActive = false
+            val mic = MicInputStream().also { it.start() }
+            audio = mic
+            sessionActive = true
+            try {
+                withContext(Dispatchers.Main) { w.start(mic) }
+                Log.d(TAG, "whisper.start ok")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "whisper.start failed: ${e.message}")
+                sessionActive = false
+            }
         }
     }
 
@@ -316,6 +329,10 @@ private class MicInputStream : InputStream() {
 
     override fun read(): Int = throw UnsupportedOperationException("byte-at-a-time not supported")
 
+    private var totalBytes = 0L
+    private var peak = 0
+    private var lastLogAt = 0L
+
     override fun read(b: ByteArray, off: Int, len: Int): Int {
         if (closed) return -1
         if (silent || record == null) {
@@ -323,10 +340,24 @@ private class MicInputStream : InputStream() {
             return len
         }
         val n = record!!.read(b, off, len, AudioRecord.READ_BLOCKING)
-        return if (n <= 0) -1 else n // <=0 => end of stream, unblocks the SDK's read loop
+        if (n <= 0) return -1 // <=0 => end of stream, unblocks the SDK's read loop
+        totalBytes += n
+        var i = off
+        while (i < off + n - 1) {
+            val s = ((b[i + 1].toInt() shl 8) or (b[i].toInt() and 0xff)).toShort().toInt()
+            if (kotlin.math.abs(s) > peak) peak = kotlin.math.abs(s)
+            i += 2
+        }
+        val now = System.currentTimeMillis()
+        if (now - lastLogAt > 3000) {
+            lastLogAt = now
+            Log.d(TAG, "mic stream: ${totalBytes / 32000.0}s, peak=$peak (${if (peak > 300) "signal" else "quiet"})")
+        }
+        return n
     }
 
     private companion object {
+        const val TAG = "WhisperSTT.mic"
         const val SAMPLE_RATE = 16_000
         const val FRAME_BYTES = 1_280 // 40 ms, per the guide
     }

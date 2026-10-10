@@ -29,25 +29,36 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.outlined.Article
+import androidx.compose.material.icons.outlined.CalendarToday
+import androidx.compose.material.icons.outlined.Category
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.List
+import androidx.compose.material.icons.outlined.LocationOn
+import androidx.compose.material.icons.outlined.Notes
+import androidx.compose.material.icons.outlined.Numbers
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,143 +67,278 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.megathon.incidentassistant.R
+import com.megathon.incidentassistant.form.FieldType
+import com.megathon.incidentassistant.form.FormField
+import kotlinx.coroutines.delay
 
 private val MinTouch = 56.dp // above the 48dp Android minimum
 
+/** Dark voice-assistant card, like the reference: a calm green conversation surface. */
+private val VoiceCardColor = Color(0xFF0B3B2E)
+private val VoiceBubbleColor = Color(0xFF14523F)
+private val VoiceOnCard = Color.White
+private val VoiceOnCardMuted = Color(0xCCFFFFFF)
+
 /**
- * The assistant stage — immersive, Siri-style.
+ * Step 1 — the conversation. One screen, like Siri/Gemini with a report behind it:
  *
- * Voice-first: a big mic to start, an animated waveform while listening with the live
- * ASR caption large on screen, and pill controls. The transcript is always shown and
- * editable before it reaches the LLM, so speech-recognition mistakes are caught by the
- * human, not extracted into the report. Typing remains as a no-mic fallback.
+ *  - a header with the step and the on-device badge,
+ *  - the voice card: what the assistant is asking, the waveform while listening, the live
+ *    transcript, and the single start/stop control,
+ *  - the fields extracted so far, and a "Review report" button to step 2.
+ *
+ * Typing stays as a no-mic fallback under the extracted fields.
  */
 @Composable
 fun CaptureScreen(state: UiState, vm: IncidentViewModel, onStartRecording: () -> Unit) {
-    val gradient = Brush.verticalGradient(
-        listOf(
-            MaterialTheme.colorScheme.surface,
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
-        )
-    )
-    Box(
-        Modifier
+    Column(
+        modifier = Modifier
             .fillMaxSize()
-            .background(gradient),
+            .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        Column(
+        Header(state)
+        VoiceCard(state, vm, onStartRecording)
+        ExtractedDetails(state, vm)
+        Button(
+            onClick = vm::onSkipToReview,
+            enabled = !state.loadingForm,
+            shape = RoundedCornerShape(16.dp),
             modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .navigationBarsPadding()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+                .fillMaxWidth()
+                .heightIn(min = MinTouch),
         ) {
-            StatusText(state.status, active = state.listening || state.processing || state.loadingForm)
+            Text(stringResource(R.string.review_report), fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.width(8.dp))
+            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
+        }
+        SecondaryControls(state, vm)
+    }
+}
 
-            state.followUpQuestion?.let { FollowUpCard(it, state.followUpIsConfirmation, vm) }
+// ---------- header ----------
 
-            Spacer(Modifier.height(8.dp))
-
-            // The stage: idle mic (tap to start) / animated waveform + live caption.
-            WaveformStage(
-                state = state,
-                onStartRecording = onStartRecording,
+@Composable
+private fun Header(state: UiState) {
+    val stepNumber = when (state.step) {
+        Step.CAPTURE -> 1
+        Step.REVIEW -> 2
+        Step.SUBMITTED -> 3
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                stringResource(R.string.report_new),
+                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.6.sp),
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
             )
-
-            CaptionArea(state, vm)
-
-            Spacer(Modifier.height(8.dp))
-
-            RecorderPills(state, vm)
-
-            LowerControls(state, vm)
+            Text(
+                stringResource(R.string.report_title),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.semantics { heading() },
+            )
+        }
+        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.secondaryContainer,
+            ) {
+                Text(
+                    stringResource(R.string.step_chip, stepNumber),
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
+            OnDeviceBadge(state)
         }
     }
 }
 
-// ---------- the Siri stage ----------
+/** "ON-DEVICE AI" with a status dot: green ready, amber warming up, red failed. */
+@Composable
+private fun OnDeviceBadge(state: UiState) {
+    val dot = when {
+        state.llmFailed -> MaterialTheme.colorScheme.error
+        state.llmReady -> Color(0xFF1B7F5A)
+        else -> Color(0xFFB07A1E)
+    }
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
+            Spacer(Modifier.width(6.dp))
+            Text(
+                stringResource(R.string.on_device_ai),
+                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+// ---------- the voice card ----------
 
 @Composable
-private fun WaveformStage(state: UiState, onStartRecording: () -> Unit) {
-    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(210.dp)) {
-        when {
-            state.listening -> {
-                val pulse = rememberInfiniteTransition(label = "ring")
-                val ringScale by pulse.animateFloat(
-                    initialValue = 1f,
-                    targetValue = 1.15f,
-                    animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse),
-                    label = "ringScale",
+private fun VoiceCard(state: UiState, vm: IncidentViewModel, onStartRecording: () -> Unit) {
+    var seconds by remember { mutableStateOf(0) }
+    LaunchedEffect(state.listening) {
+        if (!state.listening) {
+            seconds = 0
+            return@LaunchedEffect
+        }
+        while (true) {
+            delay(1_000)
+            seconds++
+        }
+    }
+
+    Surface(shape = RoundedCornerShape(24.dp), color = VoiceCardColor, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "✦ " + stringResource(R.string.voice_assistant),
+                    style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 1.4.sp),
+                    color = VoiceOnCardMuted,
+                    fontWeight = FontWeight.SemiBold,
                 )
-                Box(
-                    Modifier
-                        .size(190.dp)
-                        .scale(ringScale)
-                        .alpha(0.25f)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary),
-                )
-                WaveformBars()
+                Spacer(Modifier.weight(1f))
+                if (state.listening) {
+                    Text(
+                        "%02d:%02d".format(seconds / 60, seconds % 60),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = VoiceOnCardMuted,
+                    )
+                }
             }
 
-            state.processing -> CircularProgressIndicator(Modifier.size(72.dp))
+            Text(
+                text = when {
+                    state.followUpQuestion != null -> state.followUpQuestion
+                    state.listening -> stringResource(R.string.voice_card_listening)
+                    state.processing -> stringResource(R.string.voice_card_thinking)
+                    state.status.isNotBlank() -> state.status
+                    else -> stringResource(R.string.voice_card_idle)
+                },
+                style = MaterialTheme.typography.titleLarge,
+                color = VoiceOnCard,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            )
 
-            else -> {
-                val pulse = rememberInfiniteTransition(label = "idle")
-                val glow by pulse.animateFloat(
-                    initialValue = 0.10f,
-                    targetValue = 0.28f,
-                    animationSpec = infiniteRepeatable(tween(1500), RepeatMode.Reverse),
-                    label = "glow",
-                )
-                val micStateIdle = stringResource(R.string.mic_state_idle)
-                Box(
-                    Modifier
-                        .size(160.dp)
-                        .alpha(glow)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary),
-                )
-                Button(
-                    onClick = onStartRecording,
-                    enabled = !state.loadingForm && !state.processing && state.schema.fields.isNotEmpty(),
-                    shape = CircleShape,
-                    contentPadding = PaddingValues(0.dp),
-                    modifier = Modifier
-                        .size(120.dp)
-                        .semantics { stateDescription = micStateIdle },
-                ) {
-                    Icon(
-                        Icons.Filled.Mic,
-                        contentDescription = null, // the caption below says it
-                        modifier = Modifier.size(52.dp),
+            if (state.listening) WaveformBars(color = VoiceOnCard)
+
+            val heard = when {
+                state.listening -> state.partial
+                state.processing || state.transcriptReady -> state.transcript
+                else -> state.transcript
+            }
+            if (heard.isNotBlank()) {
+                Surface(shape = RoundedCornerShape(16.dp), color = VoiceBubbleColor) {
+                    Text(
+                        "“$heard”",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = VoiceOnCard,
+                        modifier = Modifier.padding(14.dp),
                     )
+                }
+            }
+            if (state.transcriptReady && heard.isBlank()) {
+                Text(
+                    stringResource(R.string.rec_empty),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFFFFB4AB),
+                )
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                VoicePill(
+                    onClick = when {
+                        state.listening -> vm::onStopRecording
+                        state.transcriptReady -> vm::onReRecord
+                        else -> onStartRecording
+                    },
+                    icon = when {
+                        state.listening -> Icons.Filled.Stop
+                        state.transcriptReady -> Icons.Filled.Replay
+                        else -> Icons.Filled.Mic
+                    },
+                    label = when {
+                        state.listening -> stringResource(R.string.rec_stop)
+                        state.transcriptReady -> stringResource(R.string.rec_rerecord)
+                        else -> stringResource(R.string.voice_start)
+                    },
+                    enabled = state.listening || state.transcriptReady ||
+                        (!state.loadingForm && !state.processing && state.schema.fields.isNotEmpty()),
+                )
+                if (state.followUpQuestion != null && !state.listening) {
+                    TextButton(
+                        onClick = vm::onRepeatQuestion,
+                        colors = ButtonDefaults.textButtonColors(contentColor = VoiceOnCard),
+                        modifier = Modifier.heightIn(min = MinTouch),
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.followup_repeat))
+                    }
                 }
             }
         }
     }
 }
 
+@Composable
+private fun VoicePill(
+    onClick: () -> Unit,
+    icon: ImageVector,
+    label: String,
+    enabled: Boolean = true,
+) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(50),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = VoiceOnCard,
+            contentColor = VoiceCardColor,
+            disabledContainerColor = VoiceOnCard.copy(alpha = 0.35f),
+            disabledContentColor = VoiceCardColor.copy(alpha = 0.6f),
+        ),
+        modifier = Modifier.heightIn(min = MinTouch),
+    ) {
+        Icon(icon, contentDescription = null)
+        Spacer(Modifier.width(8.dp))
+        Text(label, fontWeight = FontWeight.SemiBold)
+    }
+}
+
 /** Siri-style equalizer: nine bars breathing at slightly different rates. */
 @Composable
-private fun WaveformBars() {
+private fun WaveformBars(color: Color) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -210,224 +356,153 @@ private fun WaveformBars() {
                     .width(7.dp)
                     .height(barHeight.dp)
                     .clip(RoundedCornerShape(50))
-                    .background(MaterialTheme.colorScheme.primary),
+                    .background(color),
             )
         }
     }
 }
 
-// ---------- caption / transcript ----------
+// ---------- extracted fields ----------
 
 @Composable
-private fun CaptionArea(state: UiState, vm: IncidentViewModel) {
-    when {
-        state.listening -> Text(
-            text = state.partial.ifBlank { stringResource(R.string.rec_hear_hint) },
-            style = MaterialTheme.typography.headlineSmall,
-            textAlign = TextAlign.Center,
-            modifier = Modifier
-                .fillMaxWidth()
-                .semantics { liveRegion = LiveRegionMode.Polite },
-        )
-
-        state.transcriptReady -> Text(
-            text = stringResource(R.string.rec_empty),
-            style = MaterialTheme.typography.bodyLarge,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.error,
-            modifier = Modifier.fillMaxWidth(),
-        )
-
-        state.processing && state.transcript.isNotBlank() -> Text(
-            text = stringResource(R.string.rec_you_said, state.transcript),
-            style = MaterialTheme.typography.bodyLarge,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.fillMaxWidth(),
-        )
-
-        state.llmStatus.isNotBlank() -> Text(
-            text = state.llmStatus,
-            style = MaterialTheme.typography.bodyMedium,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier
-                .fillMaxWidth()
-                .semantics { liveRegion = LiveRegionMode.Polite },
-        )
-
-        else -> Text(
-            text = stringResource(R.string.rec_intro),
-            style = MaterialTheme.typography.bodyLarge,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-}
-
-// ---------- voice-first pills ----------
-
-@Composable
-private fun RecorderPills(state: UiState, vm: IncidentViewModel) {
-    when {
-        state.listening -> PillButton(
-            onClick = vm::onStopRecording,
-            icon = { Icon(Icons.Filled.Stop, contentDescription = null) },
-            label = stringResource(R.string.rec_stop),
-            destructive = true,
-        )
-
-        state.transcriptReady -> PillButton(
-            onClick = vm::onReRecord,
-            icon = { Icon(Icons.Filled.Replay, contentDescription = null) },
-            label = stringResource(R.string.rec_rerecord),
-            outlined = true,
-        )
-    }
-}
-
-@Composable
-private fun PillButton(
-    onClick: () -> Unit,
-    icon: @Composable () -> Unit,
-    label: String,
-    enabled: Boolean = true,
-    outlined: Boolean = false,
-    destructive: Boolean = false,
-) {
-    val shape = RoundedCornerShape(50)
-    if (outlined) {
-        OutlinedButton(
-            onClick = onClick,
-            enabled = enabled,
-            shape = shape,
-            contentPadding = PaddingValues(horizontal = 22.dp, vertical = 12.dp),
-            modifier = Modifier.heightIn(min = MinTouch),
-        ) {
-            icon()
-            Spacer(Modifier.width(8.dp))
-            Text(label)
-        }
-    } else {
-        Button(
-            onClick = onClick,
-            enabled = enabled,
-            shape = shape,
-            contentPadding = PaddingValues(horizontal = 22.dp, vertical = 12.dp),
-            colors = if (destructive) {
-                ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.error,
-                    contentColor = MaterialTheme.colorScheme.onError,
+private fun ExtractedDetails(state: UiState, vm: IncidentViewModel) {
+    val filled = state.schema.fields.filter { state.values[it.id]?.value?.isNotBlank() == true }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                stringResource(R.string.extracted_heading),
+                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.6.sp),
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.weight(1f))
+            Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.primaryContainer) {
+                Text(
+                    stringResource(R.string.inferred_count, filled.size),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                 )
-            } else ButtonDefaults.buttonColors(),
-            modifier = Modifier.heightIn(min = MinTouch),
-        ) {
-            icon()
-            Spacer(Modifier.width(8.dp))
-            Text(label)
+            }
         }
+        Text(
+            stringResource(R.string.extracted_title),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.semantics { heading() },
+        )
+        Text(
+            stringResource(R.string.extracted_subtitle),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (filled.isEmpty()) {
+            Text(
+                stringResource(R.string.extracted_empty),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            for (field in filled) {
+                FieldCard(
+                    field = field,
+                    value = vm.displayValue(field, state.values.getValue(field.id).value),
+                    onEdit = vm::onSkipToReview,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FieldCard(field: FormField, value: String, onEdit: () -> Unit) {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    iconFor(field),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    field.label.ifBlank { field.id },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(value, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+            }
+            IconButton(onClick = onEdit, modifier = Modifier.size(MinTouch)) {
+                Icon(
+                    Icons.Outlined.Edit,
+                    contentDescription = stringResource(R.string.review_report),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+    }
+}
+
+private fun iconFor(field: FormField): ImageVector = when (field.type) {
+    FieldType.DATETIME -> Icons.Outlined.CalendarToday
+    FieldType.ENUM -> Icons.Outlined.Category
+    FieldType.BOOLEAN -> Icons.Outlined.CheckCircle
+    FieldType.NUMBER -> Icons.Outlined.Numbers
+    FieldType.STRING_LIST -> Icons.Outlined.List
+    FieldType.TEXTAREA -> Icons.Outlined.Notes
+    FieldType.TEXT -> when {
+        field.id.contains("location", ignoreCase = true) -> Icons.Outlined.LocationOn
+        field.id.contains("reporter", ignoreCase = true) ||
+            field.id.contains("person", ignoreCase = true) -> Icons.Outlined.Person
+        else -> Icons.Outlined.Article
     }
 }
 
 // ---------- secondary controls (typing fallback, toggles, refresh) ----------
 
 @Composable
-private fun LowerControls(state: UiState, vm: IncidentViewModel) {
+private fun SecondaryControls(state: UiState, vm: IncidentViewModel) {
     var typingOpen by remember { mutableStateOf(false) }
 
-    if (!state.listening && !state.transcriptReady) {
-        TextButton(
-            onClick = { typingOpen = !typingOpen },
-            enabled = !state.processing,
-            modifier = Modifier.heightIn(min = MinTouch),
-        ) {
-            Text(
-                stringResource(
-                    if (typingOpen) R.string.type_toggle_hide else R.string.type_toggle_show
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (!state.listening && !state.transcriptReady) {
+            TextButton(
+                onClick = { typingOpen = !typingOpen },
+                enabled = !state.processing,
+                modifier = Modifier.heightIn(min = MinTouch),
+            ) {
+                Text(
+                    stringResource(
+                        if (typingOpen) R.string.type_toggle_hide else R.string.type_toggle_show
+                    )
                 )
-            )
-        }
-        if (typingOpen) TypedInput(state, vm)
-    }
-
-    SpeakPromptsRow(state.speakPrompts, vm::onSpeakPromptsChanged)
-
-    TextButton(
-        onClick = vm::onRefreshForm,
-        enabled = !state.processing && !state.listening && !state.loadingForm,
-        modifier = Modifier.heightIn(min = MinTouch),
-    ) { Text(stringResource(R.string.refresh_form)) }
-}
-
-/** Siri-style status pill with a pulsing dot while the assistant is listening/working.
- * Live region: TalkBack reads this whenever the text changes, without moving focus. */
-@Composable
-private fun StatusText(status: String, active: Boolean) {
-    Surface(
-        shape = RoundedCornerShape(50),
-        color = if (active) MaterialTheme.colorScheme.primaryContainer
-        else MaterialTheme.colorScheme.surfaceVariant,
-        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            val pulse = rememberInfiniteTransition(label = "statusPulse")
-            val dotAlpha by pulse.animateFloat(
-                initialValue = 0.35f,
-                targetValue = 1f,
-                animationSpec = infiniteRepeatable(tween(650), RepeatMode.Reverse),
-                label = "dotAlpha",
-            )
-            Box(
-                Modifier
-                    .size(10.dp)
-                    .alpha(dotAlpha)
-                    .clip(CircleShape)
-                    .background(
-                        if (active) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.primary,
-                    ),
-            )
-            Spacer(Modifier.width(10.dp))
-            Text(status, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
-        }
-    }
-}
-
-@Composable
-private fun FollowUpCard(question: String, isConfirmation: Boolean, vm: IncidentViewModel) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer,
-            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        ),
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                stringResource(if (isConfirmation) R.string.confirm_heading else R.string.followup_heading),
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.semantics { heading() },
-            )
-            Text(question, style = MaterialTheme.typography.bodyLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = vm::onRepeatQuestion,
-                    modifier = Modifier.heightIn(min = MinTouch),
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.followup_repeat))
-                }
-                TextButton(
-                    onClick = vm::onSkipToReview,
-                    modifier = Modifier.heightIn(min = MinTouch),
-                ) { Text(stringResource(R.string.skip_to_review)) }
             }
+            if (typingOpen) TypedInput(state, vm)
         }
+
+        SpeakPromptsRow(state.speakPrompts, vm::onSpeakPromptsChanged)
+
+        TextButton(
+            onClick = vm::onRefreshForm,
+            enabled = !state.processing && !state.listening && !state.loadingForm,
+            modifier = Modifier.heightIn(min = MinTouch),
+        ) { Text(stringResource(R.string.refresh_form)) }
     }
 }
 

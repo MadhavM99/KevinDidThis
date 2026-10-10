@@ -1,6 +1,7 @@
 package com.megathon.incidentassistant
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -54,6 +55,21 @@ class MainActivity : ComponentActivity() {
                 IncidentAssistantRoot(vm)
             }
         }
+        handleLaunchIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleLaunchIntent(intent)
+    }
+
+    /** Widget tap → start listening as soon as the form is ready (no extra tap). */
+    private fun handleLaunchIntent(intent: Intent?) {
+        if (intent?.action == ACTION_AUTO_LISTEN) vm.onWidgetLaunch()
+    }
+
+    companion object {
+        const val ACTION_AUTO_LISTEN = "com.megathon.incidentassistant.action.AUTO_LISTEN"
     }
 }
 
