@@ -1,6 +1,8 @@
 package com.megathon.incidentassistant.ai
 
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,6 +19,9 @@ import kotlinx.coroutines.flow.asStateFlow
 class PlaceholderSpeechToText : SpeechToText {
     private val partial = MutableStateFlow("")
     override val partialTranscript: StateFlow<String> = partial.asStateFlow()
+
+    /** No VAD in the placeholder: the user stops with the mic button (or widget tap). */
+    override val utteranceFinished: Flow<Unit> = MutableSharedFlow()
 
     override suspend fun prepare() {
         // TODO: load ASR model + choose delegate (CPU / GPU / NPU).

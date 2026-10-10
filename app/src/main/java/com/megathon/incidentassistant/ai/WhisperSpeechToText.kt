@@ -10,6 +10,8 @@ import com.qualcomm.qti.voice.assist.whisper.sdk.Whisper
 import com.qualcomm.qti.voice.assist.whisper.sdk.WhisperResponseListener
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -44,6 +46,10 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
 
     private val partial = MutableStateFlow("")
     override val partialTranscript: StateFlow<String> = partial.asStateFlow()
+
+    /** Emitted when the SDK's VAD closed the utterance (single-shot auto-stop). */
+    private val completed = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    override val utteranceFinished: Flow<Unit> = completed
 
     @Volatile private var whisper: Whisper? = null
     @Volatile private var audio: MicInputStream? = null
@@ -173,6 +179,7 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
         override fun onFinished() {
             Log.d(TAG, "onFinished")
             if (!finished.isCompleted) finished.complete(Unit)
+            completed.tryEmit(Unit) // single-shot: the pipeline may now stop + process
         }
     }
 

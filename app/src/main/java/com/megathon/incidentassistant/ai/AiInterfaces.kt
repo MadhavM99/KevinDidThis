@@ -1,5 +1,6 @@
 package com.megathon.incidentassistant.ai
 
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -9,6 +10,13 @@ import kotlinx.coroutines.flow.StateFlow
 interface SpeechToText {
     /** Live captions while the user is speaking. */
     val partialTranscript: StateFlow<String>
+
+    /**
+     * Emits when the backend itself detected end-of-speech (e.g. Whisper SDK VAD) and has
+     * finished flushing. The pipeline uses this for single-shot mode: stop + process with
+     * no extra tap. Backends without VAD never emit (tap-to-stop still works).
+     */
+    val utteranceFinished: Flow<Unit>
 
     /** Load model files, warm up delegates. Called once at start-up. */
     suspend fun prepare()
