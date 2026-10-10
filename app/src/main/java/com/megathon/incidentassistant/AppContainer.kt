@@ -8,6 +8,8 @@ import com.megathon.incidentassistant.ai.PlaceholderLlm
 import com.megathon.incidentassistant.ai.PlaceholderSpeechToText
 import com.megathon.incidentassistant.ai.SpeechSynthesizer
 import com.megathon.incidentassistant.ai.SpeechToText
+import com.megathon.incidentassistant.ai.WhisperModelsAvailable
+import com.megathon.incidentassistant.ai.WhisperSpeechToText
 import com.megathon.incidentassistant.data.InMemoryReportRepository
 import com.megathon.incidentassistant.data.ReportRepository
 import com.megathon.incidentassistant.net.BundledFormSource
@@ -17,7 +19,11 @@ import com.megathon.incidentassistant.net.ProxyFormSource
 import com.megathon.incidentassistant.net.ReportSubmitter
 
 object AppConfig {
-    /** Flip to false once the real on-device models are plugged in; hides the demo banner. */
+    /**
+     * Flip to false once the real on-device models are plugged in; hides the demo banner.
+     * ASR is already real (Qualcomm Whisper SDK) as soon as the model files exist on the
+     * device - see `ai/WhisperModels`. The LLM stage still runs `PlaceholderLlm`.
+     */
     const val USING_PLACEHOLDER_MODELS = true
 
     /**
@@ -38,13 +44,25 @@ object AppConfig {
  * (SpeechSynthesizer), plus the proxy endpoints.
  */
 class AppContainer(context: Context) {
-    val speechToText: SpeechToText = PlaceholderSpeechToText()          // TODO: on-device ASR
+    private val appContext = context.applicationContext
+
+    /**
+     * Use the real Qualcomm Whisper SDK when its model files are on the device, otherwise keep
+     * the placeholder so the app still runs on a phone that has never had models pushed to it.
+     */
+    val speechToText: SpeechToText =
+        if (WhisperModelsAvailable.check(appContext)) WhisperSpeechToText(appContext)
+        else PlaceholderSpeechToText()
+
     val llm: LlmBackend = PlaceholderLlm()                              // TODO: on-device LLM
-    val synthesizer: SpeechSynthesizer = AndroidSpeechSynthesizer(context)
+    val synthesizer: SpeechSynthesizer = AndroidSpeechSynthesizer(appContext)
     val repository: ReportRepository = InMemoryReportRepository()
     val formSource: FormSource =
-        ProxyFormSource(AppConfig.PROXY_BASE_URL, BundledFormSource(context.applicationContext))
+        ProxyFormSource(AppConfig.PROXY_BASE_URL, BundledFormSource(appContext))
     val reportSubmitter: ReportSubmitter = HttpReportSubmitter(AppConfig.PROXY_BASE_URL)
+
+    /** For logging/UI: which ASR implementation is actually wired up. */
+    val usingRealAsr: Boolean = speechToText is WhisperSpeechToText
 }
 
 class IncidentApp : Application() {

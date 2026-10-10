@@ -39,6 +39,15 @@ secrets.properties
 .vscode/
 .navigation/
 
+# ---------- Whisper model weights (~630 MB, from AI Hub; see docs/ASR.md) ----------
+# Re-fetch: whisper_small-voice_ai-float-qualcomm_snapdragon_8gen3.zip from AI Hub
+#   -> encoder_model_htp.bin / decoder_model_htp.bin / vocab.bin
+models/
+
+# ---------- Qualcomm SDK binaries (regenerate with scripts/fetch-whisper-sdk.sh) ----------
+# ~32 MB of third-party .so/.jar from VoiceAI_ASR + QNN; never committed.
+app/libs/
+
 # ---------- OS / misc ----------
 .DS_Store
 .DS_Store?

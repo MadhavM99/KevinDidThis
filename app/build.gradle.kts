@@ -26,9 +26,18 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
+    sourceSets {
+        // Qualcomm Whisper SDK native libs land in app/libs/arm64-v8a via scripts/fetch-whisper-sdk.sh
+        getByName("main") { jniLibs.srcDir("libs") }
+    }
+    packaging {
+        jniLibs { useLegacyPackaging = true }
+    }
 }
 
 dependencies {
+    // Qualcomm Whisper (VoiceAI ASR) Java API - copied by scripts/fetch-whisper-sdk.sh
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
     implementation(platform("androidx.compose:compose-bom:2024.06.00"))
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-compose:1.9.0")
