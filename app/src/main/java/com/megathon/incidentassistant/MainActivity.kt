@@ -11,7 +11,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -31,7 +30,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.megathon.incidentassistant.ui.CaptureScreen
@@ -131,19 +129,12 @@ fun IncidentAssistantRoot(vm: IncidentViewModel) {
                         Step.CAPTURE -> R.string.step_capture
                     }
                 )
-                Column(Modifier.fillMaxSize()) {
-                    Text(
-                        text = stepText,
-                        style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    )
-                    // paneTitle makes TalkBack announce the new screen when the step changes.
-                    Box(Modifier.fillMaxSize().semantics { paneTitle = stepText }) {
-                        when (state.step) {
-                            Step.REVIEW -> ReviewScreen(state, vm)
-                            Step.SUBMITTED -> DoneScreen(state, vm)
-                            Step.CAPTURE -> Unit // handled by the immersive branch
-                        }
+                // paneTitle makes TalkBack announce the new screen when the step changes.
+                Box(Modifier.fillMaxSize().semantics { paneTitle = stepText }) {
+                    when (state.step) {
+                        Step.REVIEW -> ReviewScreen(state, vm, onBack = vm::onAddMore)
+                        Step.SUBMITTED -> DoneScreen(state, vm)
+                        Step.CAPTURE -> Unit // handled by the immersive branch
                     }
                 }
             }

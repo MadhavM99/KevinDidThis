@@ -10,6 +10,7 @@ import com.megathon.incidentassistant.AppConfig
 import com.megathon.incidentassistant.AppContainer
 import com.megathon.incidentassistant.IncidentApp
 import com.megathon.incidentassistant.R
+import com.megathon.incidentassistant.ai.AsrStatus
 import com.megathon.incidentassistant.ai.LlmStatus
 import com.megathon.incidentassistant.ai.NoSpeechException
 import com.megathon.incidentassistant.form.FieldStatus
@@ -65,6 +66,10 @@ data class UiState(
     /** LLM warm-up result for the "ON-DEVICE AI" badge. */
     val llmReady: Boolean = false,
     val llmFailed: Boolean = false,
+    /** ASR (Whisper) load state, shown in the model status header. */
+    val asrStatus: String = "",
+    val asrReady: Boolean = false,
+    val asrFailed: Boolean = false,
 ) {
     fun field(fieldId: String): FormField? = schema.field(fieldId)
 
@@ -134,13 +139,9 @@ class IncidentViewModel(
 
     init {
         viewModelScope.launch {
-            // TTS first: its SDK sets the DSP thread parameters (128 KB stack) before any
-            // other FastRPC user creates the process threads — see MeloTtsSpeechSynthesizer.
-            // Then ASR (Whisper.init() registers its model dir on the DSP library search
-            // path, where Gemma's Hexagon backend finds libggml-htp-vXX.so), then the LLM.
-            // Each stage is isolated: a TTS (or any) warm-up failure must never block the
-            // rest of the pipeline — TTS is complementary output, not the flow.
-            safePrepare("tts") { container.synthesizer.prepare() }
+            // ASR first: Whisper.init() registers its model dir on the DSP library search
+            // path, where Gemma's Hexagon backend finds libggml-htp-vXX.so. Then the LLM.
+            // Each stage is isolated: a failure must never block the rest of the pipeline.
             safePrepare("asr") { container.speechToText.prepare() }
             safePrepare("llm") { container.llm.prepare() }
             maybeStartPendingAutoListen()
@@ -155,6 +156,18 @@ class IncidentViewModel(
                     )
                 }
             }
+        }
+        viewModelScope.launch {
+            (container.speechToText as? com.megathon.incidentassistant.ai.WhisperSpeechToText)
+                ?.status?.collect { status ->
+                    _ui.update {
+                        it.copy(
+                            asrStatus = describeAsr(status),
+                            asrReady = status is AsrStatus.Ready,
+                            asrFailed = status is AsrStatus.Failed,
+                        )
+                    }
+                }
         }
         viewModelScope.launch {
             container.speechToText.partialTranscript.collect { partial ->
@@ -495,6 +508,11 @@ class IncidentViewModel(
                 speakPrompts = it.speakPrompts,
                 loadingForm = false,
                 llmStatus = it.llmStatus,
+                llmReady = it.llmReady,
+                llmFailed = it.llmFailed,
+                asrStatus = it.asrStatus,
+                asrReady = it.asrReady,
+                asrFailed = it.asrFailed,
             )
         }
         pushWidget(str(R.string.widget_status_ready))
@@ -528,6 +546,13 @@ class IncidentViewModel(
         LlmStatus.Loading -> str(R.string.llm_loading)
         is LlmStatus.Ready -> str(R.string.llm_ready, status.detail)
         is LlmStatus.Failed -> str(R.string.model_unavailable, status.reason)
+    }
+
+    private fun describeAsr(status: AsrStatus): String = when (status) {
+        AsrStatus.NotLoaded -> ""
+        AsrStatus.Loading -> str(R.string.llm_loading) // reuses "Loading…" string
+        is AsrStatus.Ready -> status.detail
+        is AsrStatus.Failed -> str(R.string.model_unavailable, status.reason)
     }
 
     private fun fail() {

@@ -2,10 +2,10 @@ package com.megathon.incidentassistant
 
 import android.app.Application
 import android.content.Context
+import com.megathon.incidentassistant.ai.AndroidSpeechSynthesizer
 import com.megathon.incidentassistant.ai.GemmaGenieXLlm
 import com.megathon.incidentassistant.ai.GemmaModels
 import com.megathon.incidentassistant.ai.LlmBackend
-import com.megathon.incidentassistant.ai.MeloTtsSpeechSynthesizer
 import com.megathon.incidentassistant.ai.SpeechSynthesizer
 import com.megathon.incidentassistant.ai.SpeechToText
 import com.megathon.incidentassistant.ai.WhisperSpeechToText
@@ -25,7 +25,7 @@ object AppConfig {
      * Blank (default): the bundled sample form (`assets/forms/incident_report.json`) is
      * auto-loaded and the app works fully offline — no server needed for the demo.
      *
-     * Set it to use a live or mock server, e.g.:
+     * Set it to use a live or mock server, e.g.:\
      *   http://127.0.0.1:8787  (device with `adb reverse tcp:8787 tcp:8787`, mock running)
      *   http://10.0.2.2:8787   (emulator)
      * If the server is unreachable, the sample form is used instead.
@@ -42,9 +42,9 @@ object AppConfig {
  *
  *  - ASR: Qualcomm Whisper SDK on the Hexagon HTP (`scripts/push-whisper-models.sh`)
  *  - LLM: Gemma 4 E2B through GenieX llama.cpp on the Hexagon NPU (`scripts/push-gemma-model.sh`)
- *  - TTS: Qualcomm MeloTTS on the NPU (`scripts/push-tts-model.sh`)
+ *  - TTS: Android built-in TextToSpeech (no model required; pick an offline voice in system settings)
  *
- * See docs/ASR.md, docs/LLM.md and docs/TTS.md.
+ * See docs/ASR.md and docs/LLM.md.
  */
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
@@ -57,7 +57,8 @@ class AppContainer(context: Context) {
         GemmaModels.appDir(appContext) ?: appContext.filesDir.absolutePath,
     )
 
-    val synthesizer: SpeechSynthesizer = MeloTtsSpeechSynthesizer(appContext)
+    /** Android system TTS — no model bundle required. */
+    val synthesizer: SpeechSynthesizer = AndroidSpeechSynthesizer(appContext)
     val repository: ReportRepository = InMemoryReportRepository()
 
     /** Bundled sample by default; the server (when configured) replaces it. */

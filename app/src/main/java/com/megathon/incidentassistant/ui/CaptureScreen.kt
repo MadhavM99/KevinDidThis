@@ -65,7 +65,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -77,7 +76,6 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.megathon.incidentassistant.R
@@ -116,6 +114,7 @@ fun CaptureScreen(state: UiState, vm: IncidentViewModel, onStartRecording: () ->
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
         Header(state)
+        ModelStatusRow(state)
         VoiceCard(state, vm, onStartRecording)
         ExtractedDetails(state, vm)
         Button(
@@ -138,11 +137,6 @@ fun CaptureScreen(state: UiState, vm: IncidentViewModel, onStartRecording: () ->
 
 @Composable
 private fun Header(state: UiState) {
-    val stepNumber = when (state.step) {
-        Step.CAPTURE -> 1
-        Step.REVIEW -> 2
-        Step.SUBMITTED -> 3
-    }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
         Column(Modifier.weight(1f)) {
             Text(
@@ -158,18 +152,76 @@ private fun Header(state: UiState) {
                 modifier = Modifier.semantics { heading() },
             )
         }
-        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = MaterialTheme.colorScheme.secondaryContainer,
-            ) {
+        OnDeviceBadge(state)
+    }
+}
+
+/**
+ * A row of per-model status badges: one for Whisper ASR and one for Gemma LLM.
+ * Each badge shows a coloured dot (loading = amber, ready = green, failed = red).
+ */
+@Composable
+private fun ModelStatusRow(state: UiState) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        ModelStatusBadge(
+            label = "WHISPER ASR",
+            detail = state.asrStatus,
+            isReady = state.asrReady,
+            isFailed = state.asrFailed,
+            modifier = Modifier.weight(1f),
+        )
+        ModelStatusBadge(
+            label = "GEMMA LLM",
+            detail = state.llmStatus,
+            isReady = state.llmReady,
+            isFailed = state.llmFailed,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun ModelStatusBadge(
+    label: String,
+    detail: String,
+    isReady: Boolean,
+    isFailed: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val dot = when {
+        isFailed -> MaterialTheme.colorScheme.error
+        isReady -> Color(0xFF1B7F5A)
+        else -> Color(0xFFB07A1E)
+    }
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = modifier,
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
+                Spacer(Modifier.width(6.dp))
                 Text(
-                    stringResource(R.string.step_chip, stepNumber),
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    label,
+                    style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold,
                 )
             }
-            OnDeviceBadge(state)
+            if (detail.isNotBlank()) {
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }

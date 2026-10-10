@@ -4,14 +4,6 @@
   "version": "1.0",
   "fields": [
     {
-      "id": "reported_by", "prefill": "reporter", "ask_phrase": "who is reporting it",
-      "label": "Reported By",
-      "type": "text",
-      "required": true,
-      "question": "Who is reporting this incident?",
-      "keywords": ["reported by", "my name is", "this is"]
-    },
-    {
       "id": "incident_type",
       "label": "Incident Type",
       "type": "enum",

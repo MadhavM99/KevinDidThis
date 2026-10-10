@@ -23,6 +23,16 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.InputStream
 
+/** Load state for the Whisper ASR model. */
+sealed interface AsrStatus {
+    data object NotLoaded : AsrStatus
+    data object Loading : AsrStatus
+    data class Ready(val detail: String) : AsrStatus
+    data class Failed(val reason: String) : AsrStatus
+}
+
+
+
 /**
  * Real on-device ASR backed by the Qualcomm **Whisper SDK** (Qualcomm VoiceAI ASR, runtime
  * "Qualcomm(R) Voice AI", model whisper_small on AI Hub).
@@ -77,12 +87,16 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
     private val initMutex = Mutex()
     private var initDone = false
 
+    private val _status = MutableStateFlow<AsrStatus>(AsrStatus.NotLoaded)
+    val status: StateFlow<AsrStatus> = _status.asStateFlow()
+
     // ---------- SpeechToText ----------
 
     override suspend fun prepare() {
         initMutex.withLock {
             if (initDone) return@withLock
             initDone = true
+            _status.value = AsrStatus.Loading
             withContext(Dispatchers.Default) {
                 val modelDir = resolveModelDir()
                 val w = Whisper.newInstance()
@@ -109,8 +123,10 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
                 if (rc == Whisper.NO_ERROR) {
                     whisper = w
                     ready = true
+                    _status.value = AsrStatus.Ready("Whisper · HTP")
                     Log.i(TAG, "whisper ready, modelDir=$modelDir version=${w.version}")
                 } else {
+                    _status.value = AsrStatus.Failed("rc=$rc")
                     Log.e(TAG, "whisper.init failed rc=$rc modelDir=$modelDir")
                     w.deInit()
                 }
