@@ -36,7 +36,7 @@ Nothing else in the app knows the model or runtime exists.
 |---|---|
 | Init | `GenieXSdk.getInstance().init(context, callback)` registers `libgeniex_plugin_llama_cpp.so` |
 | Import side-loaded weights | `ModelManagerWrapper.pullFlow(ModelPullInput(model_name="local/gemma-4-e2b-it-q4_0", hub=HubSource.LOCALFS, local_path=<dir>, model_type=ModelType.LLM))`. `ModelType.LLM` = text only, no mmproj |
-| Load | `LlmWrapper.builder().llmCreateInput(LlmCreateInput(model_path, config=ModelConfig(nCtx=4096), runtime_id="llama_cpp", compute_unit=…)).build()`, tried with `npu` → `gpu` → `cpu` until one succeeds |
+| Load | `LlmWrapper.builder().llmCreateInput(LlmCreateInput(model_path, config=ModelConfig(nCtx=4096), runtime_id="llama_cpp", compute_unit="npu")).build()`. NPU only — see "Hexagon skel staging" below |
 | Per turn | `reset()` (drop the previous turn's KV cache) → `applyChatTemplate([user message], tools=null, enableThinking=false)` (the GGUF's own Gemma template) → `generateStreamFlow(formattedText, GenerationConfig(...))` |
 | Cancel | the native `generate()` blocks, so a cancelled turn calls `stopStream()` from a watcher coroutine |
 | Release | `destroy()` (from `IncidentViewModel.onCleared`, same as Whisper's `release()`) |
@@ -45,6 +45,27 @@ Lifecycle guarantees: loaded once at start-up (`prepare()`, off the main thread)
 every turn, one generation at a time (mutex), load failure goes to `LlmStatus.Failed`
 (shown on screen) instead of crashing. Logs carry token counts and timings only, never
 prompts, outputs or transcripts.
+
+### Hexagon skel staging (Android-specific)
+
+`compute_unit="npu"` makes the runtime load the GGML Hexagon skel (`libggml-htp-v75.so` on
+SM8650) onto the DSP through FastRPC. FastRPC resolves `file:///libggml-htp-vXX.so` from a
+fixed DSP library search list, and the app's own native-library directory is **not** on it,
+so the HTP session open fails:
+
+```
+ggml-hex: HTP0 failed to open session : uri file:///libggml-htp-v75.so?htp_iface_skel_handle_invoke&… error 0x80000406
+dynamic loading failed … dlopen libggml-htp-v75.so: errno 2 (No such file or directory)
+```
+
+(Reproduced in qualcomm/GenieX#1507 on SM8650.) The Qualcomm Whisper SDK adds its model dir
+(`<externalFilesDir>/whisper`) to that DSP search list in `Whisper.init()`, and the list
+observed on the QIDK contains it. So the app copies the APK's
+`libggml-htp-v{73,75,79,81}.so` there before creating the model
+(`GemmaGenieXLlm.stageHtpSkeletons`), and `IncidentViewModel` prepares ASR before the LLM
+so the path is registered first. No root or remount: it is the app's own external files dir.
+Verified on the QIDK: the model loads on `npu` in ~4.3 s (the old `npu → gpu → cpu` code
+fell back to Adreno/OpenCL after ~0.9 s and took ~24 s to load).
 
 ### Inference configuration
 
@@ -56,7 +77,7 @@ prompts, outputs or transcripts.
 | Stop words | `</tool_call>` | stop right after the one call we need |
 | Thinking | off (`enableThinking=false`) | no reasoning tokens to wait for or parse around |
 | Timeout | 30 s per call (`ExtractionEngine`) | covers a first call still waiting on the model load |
-| Compute unit | `npu` → `gpu` → `cpu` | first that loads; the chosen one is shown on screen and in logcat |
+| Compute unit | `npu` only | Gemma must run on the Hexagon HTP; a GPU/CPU fallback hides NPU failures and, on the QIDK, added ~20 s of load latency |
 
 No grammar/GBNF constraint yet (`SamplerConfig.grammarString` exists in GenieX). A
 schema-generated grammar is the next reliability lever, but only once it can be tested on
@@ -122,11 +143,13 @@ Kevin's ASR (Whisper) ──final transcript──▶ user reviews/edits ──C
 ## Setup on the QIDK
 
 ```bash
+./scripts/push-whisper-models.sh     # also provides the DSP search dir the NPU skel is staged in
 ./scripts/push-gemma-model.sh        # downloads gemma-4-E2B_q4_0-it.gguf (~3 GB) and adb-pushes it
 ./gradlew :app:installDebug
 adb logcat -s GemmaLlm IncidentVM    # load time + compute unit, then per-turn timings
 ```
 
+The app stages the HTP skel itself (see "Hexagon skel staging"); no extra step or root.
 Without the GGUF on the device the app keeps the scripted `PlaceholderLlm` and shows the
 demo banner.
 
@@ -137,8 +160,8 @@ use them. Confirm that Whisper still initialises after this change (see the devi
 
 ## On-device acceptance (still to run on the QIDK)
 
-1. GGUF imports and loads: note the compute unit that loads (`npu`/`gpu`/`cpu`), the load
-   time and RAM.
+1. GGUF imports and loads on `npu` (measured: ~4.3 s on the QIDK; a GPU/CPU load is now an
+   error, not a fallback), and RSS stays within budget.
 2. The golden utterance spoken through Whisper fills five fields, and the severity question
    is spoken.
 3. "Medium" gets the optional questions and then the spoken summary. "Yes" files the report.

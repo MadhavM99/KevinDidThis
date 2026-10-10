@@ -162,6 +162,7 @@ private fun WaveformStage(state: UiState, onStartRecording: () -> Unit) {
                     animationSpec = infiniteRepeatable(tween(1500), RepeatMode.Reverse),
                     label = "glow",
                 )
+                val micStateIdle = stringResource(R.string.mic_state_idle)
                 Box(
                     Modifier
                         .size(160.dp)
@@ -176,7 +177,7 @@ private fun WaveformStage(state: UiState, onStartRecording: () -> Unit) {
                     contentPadding = PaddingValues(0.dp),
                     modifier = Modifier
                         .size(120.dp)
-                        .semantics { stateDescription = stringResource(R.string.mic_state_idle) },
+                        .semantics { stateDescription = micStateIdle },
                 ) {
                     Icon(
                         Icons.Filled.Mic,
@@ -230,6 +231,14 @@ private fun CaptionArea(state: UiState, vm: IncidentViewModel) {
         )
 
         state.transcriptReady -> TranscriptReview(state, vm)
+
+        state.processing && state.transcript.isNotBlank() -> Text(
+            text = stringResource(R.string.rec_you_said, state.transcript),
+            style = MaterialTheme.typography.bodyLarge,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.fillMaxWidth(),
+        )
 
         state.llmStatus.isNotBlank() -> Text(
             text = state.llmStatus,
@@ -377,16 +386,6 @@ private fun LowerControls(state: UiState, vm: IncidentViewModel) {
         enabled = !state.processing && !state.listening && !state.loadingForm,
         modifier = Modifier.heightIn(min = MinTouch),
     ) { Text(stringResource(R.string.refresh_form)) }
-
-    if (state.usingPlaceholderLlm) {
-        Text(
-            text = stringResource(R.string.placeholder_banner),
-            style = MaterialTheme.typography.bodySmall,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
 }
 
 /** Siri-style status pill with a pulsing dot while the assistant is listening/working.

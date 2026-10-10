@@ -38,5 +38,20 @@ adb push "$DSPLIB/libQnnSystem.so" "$DEST/"
 
 echo; echo "Installed:"; adb shell "ls -la '$DEST'"
 
+# IMPORTANT: Whisper's Whisper.init() overwrites DSP_LIBRARY_PATH with ITS model dir
+# (TranscriptionManager.cpp:71-77), and it runs at app start - after any TTS init. The DSP
+# then only searches the whisper dir, so libtts_impl_skel.so must exist there too or
+# tts_impl_open() fails silently (no onStart, no onError callback). Mirror the DSP-side
+# TTS libs into the whisper dir as well.
+WDIR="/sdcard/Android/data/$PKG/files/whisper"
+if adb shell "test -d '$WDIR'" 2>/dev/null; then
+  echo; echo "mirroring DSP-side TTS libs into $WDIR"
+  adb shell "cp '$DEST/libtts_impl_skel.so' '$DEST/libQnnHtp${HTP_VERSION}.so' '$DEST/libQnnSystem.so' '$WDIR/'"
+  adb shell "chmod 644 '$WDIR'/libtts_impl_skel.so '$WDIR'/libQnnHtp${HTP_VERSION}.so '$WDIR'/libQnnSystem.so"
+  adb shell "ls -la '$WDIR'"
+else
+  echo "note: $WDIR not present yet - re-run after pushing the ASR models"
+fi
+
 # Optional cDSP logging for debugging:
 #   adb shell "echo 0x1f > '$DEST/com.example.tts.farf'"

@@ -3,6 +3,7 @@ package com.megathon.incidentassistant.ai
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.emptyFlow
 
 /**
  * Pipeline stage 1 — Speech-to-Text. Swap the placeholder for a real on-device ASR
@@ -75,6 +76,16 @@ class LlmException(message: String, cause: Throwable? = null) : Exception(messag
 
 /** Pipeline stage 6 — Text-to-Speech output. */
 interface SpeechSynthesizer {
+    /** Load / warm up the engine once at start-up (idempotent). */
+    suspend fun prepare() = Unit
+
+    /**
+     * Emits when the assistant has finished playing the current reply, so the voice loop
+     * can re-open the mic hands-free. Backends that cannot signal completion keep the
+     * default (never emits) and the user taps Start instead.
+     */
+    val utteranceFinished: Flow<Unit> get() = emptyFlow()
+
     fun speak(text: String)
     fun stop()
     fun shutdown()

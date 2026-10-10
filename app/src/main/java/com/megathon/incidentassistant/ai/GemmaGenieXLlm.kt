@@ -38,10 +38,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  *    (`google/gemma-4-E2B-it-qat-q4_0-gguf`, file `gemma-4-E2B_q4_0-it.gguf`). There is no
  *    QAIRT/Genie context-binary bundle for it, so the `genie_bundle` + GenieDialog JNI path
  *    of the QIDK AI-Assistant sample cannot load it.
- *  - The GenieX AAR ships the GGML Hexagon backend with `libggml-htp-v75.so` (SM8650 /
- *    8 Gen 3 = HTP v75) plus OpenCL (Adreno) and CPU backends. Qualcomm validates GenieX
- *    on SM8750/SM8850 only, so 8 Gen 3 is "expected to work", not "validated": the
- *    backend tries NPU → GPU → CPU and reports which one actually loaded.
+ *  - Gemma runs on the Hexagon HTP (NPU): the GenieX AAR ships the GGML Hexagon backend
+ *    with `libggml-htp-v75.so` (SM8650 / 8 Gen 3 = HTP v75). The backend loads that skel
+ *    onto the DSP through FastRPC, which only searches a fixed DSP library path list — the
+ *    app's native-library dir is not on it, so [stageHtpSkeletons] copies the skel into
+ *    the Whisper model dir, which the Whisper SDK registers on that list at init (see
+ *    docs/LLM.md "Hexagon skel staging"). "npu" is the only compute unit tried: GPU/CPU
+ *    fallbacks only hide NPU failures and add seconds of latency (measured on the QIDK:
+ *    ~4 s load on NPU vs ~24 s on the old GPU fallback).
  *
  * API used exactly as in the GenieX 0.7.1 Android sources (`LlmWrapper.kt`,
  * `ModelManagerWrapper.kt`, `GenieXSdk.kt`). The weights are side-loaded with
@@ -49,8 +53,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * Lifecycle: loaded once ([prepare]), reused across turns, one generation at a time
  * (the native handle is not documented as thread-safe), conversation state reset before
- * each turn (every prompt carries the full form state), [release] frees the handle.
- * Logs carry timings and token counts only — never prompts or outputs (incident data).
+ * each turn (every prompt carries the full form state). The native handle is kept for the
+ * process lifetime ([release] is intentionally a no-op — re-creating it aborts). Logs carry
+ * timings and token counts only — never prompts or outputs (incident data).
  */
 class GemmaGenieXLlm(
     context: Context,
@@ -60,8 +65,13 @@ class GemmaGenieXLlm(
 
     /** Conservative decoding for extraction; see docs/LLM.md "Inference configuration". */
     data class Settings(
-        /** Tried in order until one loads. GenieX aliases: "npu", "gpu", "cpu". */
-        val computeUnits: List<String> = listOf("npu", "gpu", "cpu"),
+        /**
+         * Compute units to try, in order. NPU only: Gemma must run on the Hexagon HTP,
+         * so a failure to open the HTP session is reported instead of silently falling
+         * back to the much slower Adreno/CPU paths. "gpu"/"cpu" remain valid GenieX
+         * aliases for callers that explicitly opt into a fallback.
+         */
+        val computeUnits: List<String> = listOf("npu"),
         /** Prompt (~1-1.5k tokens for the incident form) + output, with headroom. */
         val contextLength: Int = 4096,
         /** A record_fields call for ~6 fields is ~250 tokens. */
@@ -160,12 +170,11 @@ class GemmaGenieXLlm(
     }
 
     override fun release() {
-        // Not under runLock: release is called from teardown; an in-flight generate is
-        // cancelled by its owner first. destroy() is idempotent in the SDK.
-        wrapper?.let { runCatching { it.destroy() } }
-        wrapper = null
-        computeUnit = null
-        _status.value = LlmStatus.NotLoaded
+        // GenieX native contexts do not survive a destroy() + rebuild cycle in the same
+        // process: a second LlmWrapper.build() aborts (SIGABRT in the native dispatch
+        // thread, observed on the QIDK when leaving and re-entering the screen). This
+        // backend is a singleton in AppContainer and the OS reclaims the process when
+        // needed, so the loaded handle is kept for the process lifetime.
     }
 
     // ---------- loading ----------
@@ -178,6 +187,7 @@ class GemmaGenieXLlm(
         _status.value = LlmStatus.Loading
         val start = System.nanoTime()
         try {
+            stageHtpSkeletons()
             GenieXSdk.getInstance().init(appContext, object : GenieXSdk.InitCallback {
                 override fun onSuccess() = Unit
                 // e.g. the unused qairt plugin failing to register: llama_cpp may still work.
@@ -219,6 +229,43 @@ class GemmaGenieXLlm(
             Log.e(TAG, "load failed", e)
             throw e
         }
+    }
+
+    /**
+     * FastRPC resolves the GGML Hexagon skel (`file:///libggml-htp-vXX.so`) from a fixed
+     * DSP library search list that does not include this app's native-library dir. The
+     * Whisper SDK adds its model dir to that list in `Whisper.init()` (the app always
+     * prepares ASR first, see `IncidentViewModel`), so the skels packaged in the APK are
+     * copied there before the model is created. Verified on the QIDK (SM8650): without
+     * this, HTP session open fails with `0x80000406` and GenieX used the GPU at ~6x the
+     * load time; with it, the model loads on `npu` (docs/LLM.md "Hexagon skel staging").
+     */
+    private fun stageHtpSkeletons() {
+        val sourceDir = File(appContext.applicationInfo.nativeLibraryDir)
+        val skels = sourceDir.listFiles { f ->
+            f.name.startsWith("libggml-htp-v") && f.name.endsWith(".so")
+        }.orEmpty()
+        if (skels.isEmpty()) {
+            Log.w(TAG, "no libggml-htp-v*.so in ${sourceDir.absolutePath}; the NPU load will fail")
+            return
+        }
+        val destDir = WhisperModels.appDir(appContext)?.let(::File) ?: return
+        if (!destDir.isDirectory && !destDir.mkdirs()) {
+            Log.w(TAG, "cannot create ${destDir.absolutePath}; the NPU load will fail")
+            return
+        }
+        var copied = 0
+        for (src in skels) {
+            val dst = File(destDir, src.name)
+            if (dst.length() == src.length()) continue
+            runCatching { src.copyTo(dst, overwrite = true) }
+                .onSuccess { copied++ }
+                .onFailure { Log.w(TAG, "failed to stage ${src.name}: ${it.message}") }
+        }
+        Log.i(
+            TAG,
+            "staged ${skels.size} HTP skel(s) in ${destDir.absolutePath}, copied=$copied",
+        )
     }
 
     /**

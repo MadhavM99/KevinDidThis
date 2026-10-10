@@ -8,13 +8,12 @@
     <string name="step_done">Step 3 of 3: Submitted</string>
 
     <!-- Capture screen -->
-    <string name="placeholder_banner">Demo mode: no on-device language model was found, so extraction is scripted. Push the Gemma model (scripts/push-gemma-model.sh) to enable real extraction.</string>
     <string name="llm_loading">Loading the on-device language model…</string>
     <string name="llm_ready">Language model: %1$s</string>
     <string name="model_unavailable">The on-device language model could not be loaded (%1$s). Answers to direct questions still work.</string>
-    <!-- Recorder flow: Start → live caption → Stop → review transcript → Continue -->
+    <!-- Recorder flow: Start → live caption → VAD/Stop → auto-send → spoken reply → listen again -->
     <string name="rec_start">Start recording</string>
-    <string name="rec_stop">Stop and review</string>
+    <string name="rec_stop">Stop and send</string>
     <string name="rec_rerecord">Re-record</string>
     <string name="rec_continue">Continue</string>
     <string name="rec_listening">What I hear:</string>
@@ -25,7 +24,7 @@
     <string name="type_toggle_show">Type instead</string>
     <string name="type_toggle_hide">Hide typing</string>
     <string name="rec_empty">I didn\'t hear anything — re-record or type it.</string>
-    <string name="rec_review">Here is what I heard. Check it and fix anything wrong, then continue.</string>
+    <string name="rec_you_said">You said: “%1$s”</string>
     <string name="mic_busy_label">Working, please wait</string>
     <string name="mic_state_idle">Not recording</string>
     <string name="type_label">Or type your report</string>
@@ -40,7 +39,7 @@
     <string name="refresh_form">Refresh form from server</string>
 
     <!-- Status messages (announced to screen readers and optionally spoken) -->
-    <string name="status_ready">Tap Start, speak, then review the transcript before continuing.</string>
+    <string name="status_ready">Tap the mic and describe the incident — I will ask for anything missing.</string>
     <string name="status_listening">Listening</string>
     <string name="status_processing">Understanding your report</string>
     <string name="status_review_ready">I filled in the report. Please review it, fix anything that is wrong, then submit.</string>

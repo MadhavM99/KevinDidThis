@@ -15,6 +15,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.InputStream
@@ -63,30 +65,39 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
     private var lastError: Int? = null
     private var ready = false
 
+    /** Serialises [prepare]; the native engine must be created exactly once per process. */
+    private val initMutex = Mutex()
+    private var initDone = false
+
     // ---------- SpeechToText ----------
 
-    override suspend fun prepare() = withContext(Dispatchers.Default) {
-        val modelDir = resolveModelDir()
-        val w = Whisper.newInstance()
-        w.setListener(listener)
-        w.enablePartialTranscriptions(true)
-        w.enableContinuousTranscription(false) // one utterance per tap, as the UI expects
-        w.showProgressIndicators(false)
-        w.setNoStartSpeechTimeout(NO_SPEECH_TIMEOUT_MS)
-        w.setEndOfSpeechTimeoutMs(END_OF_SPEECH_TIMEOUT_MS)
-        w.setPartialBufferMs(PARTIAL_BUFFER_MS)
-        w.setAILogLevel(Whisper.LOG_LEVEL_WARN)
+    override suspend fun prepare() {
+        initMutex.withLock {
+            if (initDone) return@withLock
+            initDone = true
+            withContext(Dispatchers.Default) {
+                val modelDir = resolveModelDir()
+                val w = Whisper.newInstance()
+                w.setListener(listener)
+                w.enablePartialTranscriptions(true)
+                w.enableContinuousTranscription(false) // one utterance per tap, as the UI expects
+                w.showProgressIndicators(false)
+                w.setNoStartSpeechTimeout(NO_SPEECH_TIMEOUT_MS)
+                w.setEndOfSpeechTimeoutMs(END_OF_SPEECH_TIMEOUT_MS)
+                w.setPartialBufferMs(PARTIAL_BUFFER_MS)
+                w.setAILogLevel(Whisper.LOG_LEVEL_WARN)
 
-        val rc = w.init(modelDir)
-        if (rc == Whisper.NO_ERROR) {
-            whisper = w
-            ready = true
-            Log.i(TAG, "whisper ready, modelDir=$modelDir version=${w.version}")
-        } else {
-            Log.e(TAG, "whisper.init failed rc=$rc modelDir=$modelDir")
-            w.deInit()
+                val rc = w.init(modelDir)
+                if (rc == Whisper.NO_ERROR) {
+                    whisper = w
+                    ready = true
+                    Log.i(TAG, "whisper ready, modelDir=$modelDir version=${w.version}")
+                } else {
+                    Log.e(TAG, "whisper.init failed rc=$rc modelDir=$modelDir")
+                    w.deInit()
+                }
+            }
         }
-        Unit
     }
 
     override suspend fun startListening() {
@@ -125,11 +136,12 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
     }
 
     override fun release() {
+        // The Whisper SDK's native engine is process-scoped: a new init after deInit() is
+        // observed to SIGSEGV inside WhisperLib::init (Android 14 / QIDK tombstone, same
+        // process re-entering the screen). This backend is a singleton in [AppContainer],
+        // so keep the initialised engine and only stop the microphone stream.
         runCatching { audio?.release() }
         audio = null
-        runCatching { whisper?.deInit() }
-        whisper = null
-        ready = false
     }
 
     /** True when the SDK initialised successfully with real model files on disk. */
