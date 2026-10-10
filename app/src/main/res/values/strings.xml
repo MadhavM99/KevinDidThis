@@ -26,6 +26,7 @@
     <string name="skip_to_review">Skip to review</string>
     <string name="speak_prompts">Speak prompts aloud</string>
     <string name="speak_prompts_hint">Turned off automatically while a screen reader such as TalkBack is active.</string>
+    <string name="refresh_form">Refresh form from server</string>
 
     <!-- Status messages (announced to screen readers and optionally spoken) -->
     <string name="status_ready">Ready. Tap the microphone and describe the incident.</string>
@@ -35,6 +36,10 @@
     <string name="status_mic_denied">Microphone permission was denied. You can type your report instead.</string>
     <string name="status_empty_input">Please say or type something first.</string>
     <string name="status_error">Something went wrong while processing. Please try again.</string>
+    <string name="status_loading_form">Loading the report form…</string>
+    <string name="status_form_error">Could not load the report form. Check the form source and try again.</string>
+    <string name="status_submitted_local">Report %1$s saved on this device. The proxy did not accept it yet; it will be retried.</string>
+    <string name="ask_default">What is the %1$s?</string>
     <string name="status_add_more">Add more details by voice or text.</string>
     <string name="status_missing_submit">Cannot submit yet. Missing required fields: %1$s.</string>
     <string name="status_submitted">Report %1$s submitted.</string>
@@ -55,31 +60,6 @@
     <string name="done_body">Your report was saved on this device. Nothing was sent to the cloud.</string>
     <string name="done_new">Start a new report</string>
 
-    <!-- Severity -->
-    <string name="severity_low">Low</string>
-    <string name="severity_medium">Medium</string>
-    <string name="severity_high">High</string>
-    <string name="severity_critical">Critical</string>
-
-    <!-- Form fields: label + question asked when the field is missing -->
-    <string name="field_incident_type">Incident type</string>
-    <string name="ask_incident_type">What type of incident was it? For example, a water leak or a fall.</string>
-    <string name="field_severity">Severity level</string>
-    <string name="ask_severity">How severe was it? Say low, medium, high, or critical.</string>
-    <string name="field_location">Incident location</string>
-    <string name="ask_location">Where did it happen?</string>
-    <string name="field_date_time">Date and time</string>
-    <string name="ask_date_time">When did it happen?</string>
-    <string name="field_persons">Persons involved</string>
-    <string name="ask_persons">Who was involved?</string>
-    <string name="field_equipment">Equipment or asset involved</string>
-    <string name="ask_equipment">Which equipment or asset was involved?</string>
-    <string name="field_description">Incident description</string>
-    <string name="ask_description">Can you describe what happened?</string>
-    <string name="field_actions">Immediate actions taken</string>
-    <string name="ask_actions">What actions were taken straight away?</string>
-    <string name="field_witnesses">Witness information</string>
-    <string name="ask_witnesses">Did anyone witness it?</string>
-    <string name="field_follow_up">Recommended follow-up action</string>
-    <string name="ask_follow_up">What follow-up do you recommend?</string>
+    <!-- Field labels and questions now come from the dynamic form definition
+         (assets/forms/*.json, docs/DESIGN.md §3.1). -->
 </resources>

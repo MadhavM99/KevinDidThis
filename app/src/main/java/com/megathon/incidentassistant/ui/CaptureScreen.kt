@@ -68,7 +68,7 @@ fun CaptureScreen(state: UiState, vm: IncidentViewModel, onMic: () -> Unit) {
     ) {
         StatusText(state.status)
 
-        state.followUpField?.let { FollowUpCard(it, vm) }
+        state.followUpQuestion?.let { FollowUpCard(it, vm) }
 
         MicButton(listening = state.listening, busy = state.processing, onClick = onMic)
 
@@ -77,6 +77,12 @@ fun CaptureScreen(state: UiState, vm: IncidentViewModel, onMic: () -> Unit) {
         TypedInput(state, vm)
 
         SpeakPromptsRow(state.speakPrompts, vm::onSpeakPromptsChanged)
+
+        TextButton(
+            onClick = vm::onRefreshForm,
+            enabled = !state.processing && !state.listening && !state.loadingForm,
+            modifier = Modifier.heightIn(min = MinTouch),
+        ) { Text(stringResource(R.string.refresh_form)) }
 
         if (AppConfig.USING_PLACEHOLDER_MODELS) {
             Card(
@@ -175,7 +181,7 @@ private fun TranscriptCard(state: UiState) {
 }
 
 @Composable
-private fun FollowUpCard(field: com.megathon.incidentassistant.domain.FieldKey, vm: IncidentViewModel) {
+private fun FollowUpCard(question: String, vm: IncidentViewModel) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -189,7 +195,7 @@ private fun FollowUpCard(field: com.megathon.incidentassistant.domain.FieldKey, 
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.semantics { heading() },
             )
-            Text(stringResource(field.askRes), style = MaterialTheme.typography.bodyLarge)
+            Text(question, style = MaterialTheme.typography.bodyLarge)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = vm::onRepeatQuestion,
@@ -211,7 +217,7 @@ private fun FollowUpCard(field: com.megathon.incidentassistant.domain.FieldKey, 
 @Composable
 private fun TypedInput(state: UiState, vm: IncidentViewModel) {
     val label = stringResource(
-        if (state.followUpField != null) R.string.type_answer_label else R.string.type_label
+        if (state.followUpQuestion != null) R.string.type_answer_label else R.string.type_label
     )
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedTextField(

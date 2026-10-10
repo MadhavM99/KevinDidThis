@@ -2,6 +2,7 @@ package com.megathon.incidentassistant.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,28 +34,32 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.megathon.incidentassistant.R
-import com.megathon.incidentassistant.domain.FieldKey
-import com.megathon.incidentassistant.domain.Severity
+import com.megathon.incidentassistant.form.FieldOption
+import com.megathon.incidentassistant.form.FieldType
+import com.megathon.incidentassistant.form.FormField
 
 private val MinTouch = 56.dp
 
+/** Synthetic options so boolean fields render as a Yes/No choice group. */
+private val BOOLEAN_OPTIONS = listOf(
+    FieldOption(value = "yes", label = "Yes"),
+    FieldOption(value = "no", label = "No"),
+)
+
 @Composable
 fun ReviewScreen(state: UiState, vm: IncidentViewModel) {
-    val missing = state.report.missingMandatory()
+    val missing = state.missingRequiredLabels()
     val summary = if (missing.isEmpty()) {
         stringResource(R.string.review_all_complete)
     } else {
-        stringResource(
-            R.string.review_some_missing,
-            missing.map { stringResource(it.labelRes) }.joinToString(", "),
-        )
+        stringResource(R.string.review_some_missing, missing.joinToString(", "))
     }
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .imePadding(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+        contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
@@ -68,14 +73,22 @@ fun ReviewScreen(state: UiState, vm: IncidentViewModel) {
             )
         }
 
-        items(FieldKey.entries.toList(), key = { it.name }) { key ->
-            if (key == FieldKey.SEVERITY) {
-                SeverityGroup(
-                    selected = Severity.parse(state.report.get(key)),
-                    onSelect = { vm.onFieldChanged(key, it.name) },
+        // The form is dynamic: fields, labels, types, options and required flags all come
+        // from the definition currently in use (assets/forms/*.json or the proxy).
+        items(state.schema.fields, key = { it.id }) { field ->
+            if (field.type == FieldType.ENUM || field.type == FieldType.BOOLEAN) {
+                OptionsGroup(
+                    field = field,
+                    options = if (field.type == FieldType.BOOLEAN) BOOLEAN_OPTIONS else field.options,
+                    selected = state.value(field.id),
+                    onSelect = { vm.onFieldChanged(field.id, it) },
                 )
             } else {
-                FieldEditor(key, state.report.get(key)) { vm.onFieldChanged(key, it) }
+                FieldEditor(
+                    field = field,
+                    value = state.value(field.id),
+                    onChange = { vm.onFieldChanged(field.id, it) },
+                )
             }
         }
 
@@ -115,11 +128,11 @@ fun ReviewScreen(state: UiState, vm: IncidentViewModel) {
 }
 
 @Composable
-private fun FieldEditor(key: FieldKey, value: String, onChange: (String) -> Unit) {
-    val base = stringResource(key.labelRes)
-    val label = if (key.mandatory) stringResource(R.string.label_required, base) else base
-    val showError = key.mandatory && value.isBlank()
-    val multiline = key == FieldKey.DESCRIPTION || key == FieldKey.ACTIONS_TAKEN || key == FieldKey.FOLLOW_UP
+private fun FieldEditor(field: FormField, value: String, onChange: (String) -> Unit) {
+    val base = field.label.ifBlank { field.id }
+    val label = if (field.required) stringResource(R.string.label_required, base) else base
+    val showError = field.required && value.isBlank()
+    val multiline = field.type == FieldType.TEXTAREA
 
     OutlinedTextField(
         value = value,
@@ -137,15 +150,24 @@ private fun FieldEditor(key: FieldKey, value: String, onChange: (String) -> Unit
 }
 
 @Composable
-private fun SeverityGroup(selected: Severity?, onSelect: (Severity) -> Unit) {
-    val title = stringResource(R.string.label_required, stringResource(FieldKey.SEVERITY.labelRes))
+private fun OptionsGroup(
+    field: FormField,
+    options: List<FieldOption>,
+    selected: String,
+    onSelect: (String) -> Unit,
+) {
+    val title = if (field.required) {
+        stringResource(R.string.label_required, field.label.ifBlank { field.id })
+    } else {
+        field.label.ifBlank { field.id }
+    }
     Column(Modifier.fillMaxWidth()) {
         Text(
             title,
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.semantics { heading() },
         )
-        if (selected == null) {
+        if (field.required && selected.isBlank()) {
             Text(
                 stringResource(R.string.field_required_error),
                 style = MaterialTheme.typography.bodyMedium,
@@ -154,22 +176,24 @@ private fun SeverityGroup(selected: Severity?, onSelect: (Severity) -> Unit) {
         }
         // selectableGroup + Role.RadioButton => TalkBack says "1 of 4, selected" etc.
         Column(Modifier.selectableGroup()) {
-            Severity.entries.forEach { level ->
+            options.forEach { option ->
+                val optionLabel = option.label.ifBlank { option.value }
+                val isSelected = option.value.equals(selected, ignoreCase = true)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = MinTouch)
                         .selectable(
-                            selected = level == selected,
+                            selected = isSelected,
                             role = Role.RadioButton,
-                            onClick = { onSelect(level) },
+                            onClick = { onSelect(option.value) },
                         )
                         .padding(vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    RadioButton(selected = level == selected, onClick = null)
+                    RadioButton(selected = isSelected, onClick = null)
                     Spacer(Modifier.width(12.dp))
-                    Text(stringResource(level.labelRes), style = MaterialTheme.typography.bodyLarge)
+                    Text(optionLabel, style = MaterialTheme.typography.bodyLarge)
                 }
             }
         }
