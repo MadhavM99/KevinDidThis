@@ -14,10 +14,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
@@ -47,15 +49,19 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -68,220 +74,317 @@ import com.megathon.incidentassistant.R
 private val MinTouch = 56.dp // above the 48dp Android minimum
 
 /**
- * Recorder-style capture: Start → speak (live ASR caption) → Stop (or VAD close) →
- * review + fix the transcript → Continue. The ASR text is always visible and editable
- * before it reaches the LLM, so speech-recognition mistakes get caught here, not in the
- * report. Typing remains as a no-mic fallback.
+ * The assistant stage — immersive, Siri-style.
+ *
+ * Voice-first: a big mic to start, an animated waveform while listening with the live
+ * ASR caption large on screen, and pill controls. The transcript is always shown and
+ * editable before it reaches the LLM, so speech-recognition mistakes are caught by the
+ * human, not extracted into the report. Typing remains as a no-mic fallback.
  */
 @Composable
 fun CaptureScreen(state: UiState, vm: IncidentViewModel, onStartRecording: () -> Unit) {
-    Column(
-        modifier = Modifier
+    val gradient = Brush.verticalGradient(
+        listOf(
+            MaterialTheme.colorScheme.surface,
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+        )
+    )
+    Box(
+        Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .imePadding()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .background(gradient),
     ) {
-        StatusText(state.status, active = state.listening || state.processing || state.loadingForm)
-
-        state.followUpQuestion?.let { FollowUpCard(it, state.followUpIsConfirmation, vm) }
-
-        RecorderCard(state, vm, onStartRecording)
-
-        if (!state.listening && !state.transcriptReady) {
-            TypedInput(state, vm)
-        }
-
-        SpeakPromptsRow(state.speakPrompts, vm::onSpeakPromptsChanged)
-
-        TextButton(
-            onClick = vm::onRefreshForm,
-            enabled = !state.processing && !state.listening && !state.loadingForm,
-            modifier = Modifier.heightIn(min = MinTouch),
-        ) { Text(stringResource(R.string.refresh_form)) }
-
-        if (state.llmStatus.isNotBlank()) {
-            Text(
-                text = state.llmStatus,
-                style = MaterialTheme.typography.bodySmall,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-            )
-        }
-
-        if (state.usingPlaceholderLlm) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                ),
-            ) {
-                Text(
-                    text = stringResource(R.string.placeholder_banner),
-                    modifier = Modifier.padding(16.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-        }
-    }
-}
-
-/** One of: recording (live caption + Stop) · reviewing transcript · idle (Start). */
-@Composable
-private fun RecorderCard(state: UiState, vm: IncidentViewModel, onStartRecording: () -> Unit) {
-    when {
-        state.listening -> ListeningSection(state, vm)
-        state.processing -> WorkingSection()
-        state.transcriptReady -> TranscriptReviewSection(state, vm)
-        else -> StartSection(state, onStartRecording)
-    }
-}
-
-// ---------- recording ----------
-
-@Composable
-private fun ListeningSection(state: UiState, vm: IncidentViewModel) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer,
-            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        ),
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(
-                stringResource(R.string.rec_listening),
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.semantics { heading() },
-            )
-            // Live ASR output: the user sees the text being recognised, in real time.
-            Text(
-                text = state.partial.ifBlank { stringResource(R.string.rec_hear_hint) },
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-            )
-            Button(
-                onClick = vm::onStopRecording,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.error,
-                    contentColor = MaterialTheme.colorScheme.onError,
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = MinTouch),
-            ) {
-                Icon(Icons.Filled.Stop, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text(stringResource(R.string.rec_stop))
-            }
-        }
-    }
-}
-
-// ---------- transcript review (fix ASR errors before the LLM sees them) ----------
-
-@Composable
-private fun TranscriptReviewSection(state: UiState, vm: IncidentViewModel) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(
-                stringResource(R.string.rec_transcript_label),
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.semantics { heading() },
-            )
-            OutlinedTextField(
-                value = state.transcript,
-                onValueChange = vm::onTranscriptChange,
-                label = { Text(stringResource(R.string.rec_transcript_label)) },
-                supportingText = { Text(stringResource(R.string.rec_transcript_hint)) },
-                minLines = 4,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            if (state.transcript.isBlank()) {
-                Text(
-                    stringResource(R.string.rec_empty),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = vm::onReRecord,
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = MinTouch),
-                ) {
-                    Icon(Icons.Filled.Replay, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.rec_rerecord))
-                }
-                Button(
-                    onClick = vm::onUseTranscript,
-                    enabled = state.transcript.isNotBlank(),
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = MinTouch),
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.rec_continue))
-                }
-            }
-        }
-    }
-}
-
-// ---------- idle (Start) / busy (working) ----------
-
-@Composable
-private fun StartSection(state: UiState, onStartRecording: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Button(
-            onClick = onStartRecording,
-            enabled = !state.loadingForm && !state.processing && state.schema.fields.isNotEmpty(),
-            shape = CircleShape,
-            contentPadding = PaddingValues(0.dp),
+        Column(
             modifier = Modifier
-                .size(136.dp)
-                .semantics { stateDescription = stringResource(R.string.mic_state_idle) },
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Icon(
-                Icons.Filled.Mic,
-                contentDescription = null, // the label below says it
-                modifier = Modifier.size(64.dp),
+            StatusText(state.status, active = state.listening || state.processing || state.loadingForm)
+
+            state.followUpQuestion?.let { FollowUpCard(it, state.followUpIsConfirmation, vm) }
+
+            Spacer(Modifier.height(8.dp))
+
+            // The stage: idle mic (tap to start) / animated waveform + live caption.
+            WaveformStage(
+                state = state,
+                onStartRecording = onStartRecording,
+            )
+
+            CaptionArea(state, vm)
+
+            Spacer(Modifier.height(8.dp))
+
+            RecorderPills(state, vm)
+
+            LowerControls(state, vm)
+        }
+    }
+}
+
+// ---------- the Siri stage ----------
+
+@Composable
+private fun WaveformStage(state: UiState, onStartRecording: () -> Unit) {
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(210.dp)) {
+        when {
+            state.listening -> {
+                val pulse = rememberInfiniteTransition(label = "ring")
+                val ringScale by pulse.animateFloat(
+                    initialValue = 1f,
+                    targetValue = 1.15f,
+                    animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse),
+                    label = "ringScale",
+                )
+                Box(
+                    Modifier
+                        .size(190.dp)
+                        .scale(ringScale)
+                        .alpha(0.25f)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                )
+                WaveformBars()
+            }
+
+            state.processing -> CircularProgressIndicator(Modifier.size(72.dp))
+
+            else -> {
+                val pulse = rememberInfiniteTransition(label = "idle")
+                val glow by pulse.animateFloat(
+                    initialValue = 0.10f,
+                    targetValue = 0.28f,
+                    animationSpec = infiniteRepeatable(tween(1500), RepeatMode.Reverse),
+                    label = "glow",
+                )
+                Box(
+                    Modifier
+                        .size(160.dp)
+                        .alpha(glow)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                )
+                Button(
+                    onClick = onStartRecording,
+                    enabled = !state.loadingForm && !state.processing && state.schema.fields.isNotEmpty(),
+                    shape = CircleShape,
+                    contentPadding = PaddingValues(0.dp),
+                    modifier = Modifier
+                        .size(120.dp)
+                        .semantics { stateDescription = stringResource(R.string.mic_state_idle) },
+                ) {
+                    Icon(
+                        Icons.Filled.Mic,
+                        contentDescription = null, // the caption below says it
+                        modifier = Modifier.size(52.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Siri-style equalizer: nine bars breathing at slightly different rates. */
+@Composable
+private fun WaveformBars() {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        for (i in 0 until 9) {
+            val transition = rememberInfiniteTransition(label = "bar$i")
+            val barHeight by transition.animateFloat(
+                initialValue = 10f,
+                targetValue = 46f,
+                animationSpec = infiniteRepeatable(tween(420 + i * 55), RepeatMode.Reverse),
+                label = "height",
+            )
+            Box(
+                Modifier
+                    .width(7.dp)
+                    .height(barHeight.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(MaterialTheme.colorScheme.primary),
             )
         }
-        Text(
-            stringResource(R.string.rec_start),
-            style = MaterialTheme.typography.titleMedium,
+    }
+}
+
+// ---------- caption / transcript ----------
+
+@Composable
+private fun CaptionArea(state: UiState, vm: IncidentViewModel) {
+    when {
+        state.listening -> Text(
+            text = state.partial.ifBlank { stringResource(R.string.rec_hear_hint) },
+            style = MaterialTheme.typography.headlineSmall,
             textAlign = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { liveRegion = LiveRegionMode.Polite },
+        )
+
+        state.transcriptReady -> TranscriptReview(state, vm)
+
+        state.llmStatus.isNotBlank() -> Text(
+            text = state.llmStatus,
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { liveRegion = LiveRegionMode.Polite },
+        )
+
+        else -> Text(
+            text = stringResource(R.string.rec_intro),
+            style = MaterialTheme.typography.bodyLarge,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 }
 
+/** Review + fix the ASR text before it reaches the LLM. */
 @Composable
-private fun WorkingSection() {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Button(
-            onClick = {},
-            enabled = false,
-            shape = CircleShape,
-            contentPadding = PaddingValues(0.dp),
-            modifier = Modifier.size(136.dp),
-        ) {
-            CircularProgressIndicator(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clearAndSetSemantics { }, // status text already announces progress
+private fun TranscriptReview(state: UiState, vm: IncidentViewModel) {
+    Column(
+        Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        OutlinedTextField(
+            value = state.transcript,
+            onValueChange = vm::onTranscriptChange,
+            label = { Text(stringResource(R.string.rec_transcript_label)) },
+            supportingText = { Text(stringResource(R.string.rec_transcript_hint)) },
+            minLines = 4,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (state.transcript.isBlank()) {
+            Text(
+                stringResource(R.string.rec_empty),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
             )
         }
+    }
+}
+
+// ---------- voice-first pills ----------
+
+@Composable
+private fun RecorderPills(state: UiState, vm: IncidentViewModel) {
+    when {
+        state.listening -> PillButton(
+            onClick = vm::onStopRecording,
+            icon = { Icon(Icons.Filled.Stop, contentDescription = null) },
+            label = stringResource(R.string.rec_stop),
+            destructive = true,
+        )
+
+        state.transcriptReady -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            PillButton(
+                onClick = vm::onReRecord,
+                icon = { Icon(Icons.Filled.Replay, contentDescription = null) },
+                label = stringResource(R.string.rec_rerecord),
+                outlined = true,
+            )
+            PillButton(
+                onClick = vm::onUseTranscript,
+                icon = { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null) },
+                label = stringResource(R.string.rec_continue),
+                enabled = state.transcript.isNotBlank(),
+            )
+        }
+    }
+}
+
+@Composable
+private fun PillButton(
+    onClick: () -> Unit,
+    icon: @Composable () -> Unit,
+    label: String,
+    enabled: Boolean = true,
+    outlined: Boolean = false,
+    destructive: Boolean = false,
+) {
+    val shape = RoundedCornerShape(50)
+    if (outlined) {
+        OutlinedButton(
+            onClick = onClick,
+            enabled = enabled,
+            shape = shape,
+            contentPadding = PaddingValues(horizontal = 22.dp, vertical = 12.dp),
+            modifier = Modifier.heightIn(min = MinTouch),
+        ) {
+            icon()
+            Spacer(Modifier.width(8.dp))
+            Text(label)
+        }
+    } else {
+        Button(
+            onClick = onClick,
+            enabled = enabled,
+            shape = shape,
+            contentPadding = PaddingValues(horizontal = 22.dp, vertical = 12.dp),
+            colors = if (destructive) {
+                ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    contentColor = MaterialTheme.colorScheme.onError,
+                )
+            } else ButtonDefaults.buttonColors(),
+            modifier = Modifier.heightIn(min = MinTouch),
+        ) {
+            icon()
+            Spacer(Modifier.width(8.dp))
+            Text(label)
+        }
+    }
+}
+
+// ---------- secondary controls (typing fallback, toggles, refresh) ----------
+
+@Composable
+private fun LowerControls(state: UiState, vm: IncidentViewModel) {
+    var typingOpen by remember { mutableStateOf(false) }
+
+    if (!state.listening && !state.transcriptReady) {
+        TextButton(
+            onClick = { typingOpen = !typingOpen },
+            enabled = !state.processing,
+            modifier = Modifier.heightIn(min = MinTouch),
+        ) {
+            Text(
+                stringResource(
+                    if (typingOpen) R.string.type_toggle_hide else R.string.type_toggle_show
+                )
+            )
+        }
+        if (typingOpen) TypedInput(state, vm)
+    }
+
+    SpeakPromptsRow(state.speakPrompts, vm::onSpeakPromptsChanged)
+
+    TextButton(
+        onClick = vm::onRefreshForm,
+        enabled = !state.processing && !state.listening && !state.loadingForm,
+        modifier = Modifier.heightIn(min = MinTouch),
+    ) { Text(stringResource(R.string.refresh_form)) }
+
+    if (state.usingPlaceholderLlm) {
         Text(
-            stringResource(R.string.mic_busy_label),
-            style = MaterialTheme.typography.titleMedium,
+            text = stringResource(R.string.placeholder_banner),
+            style = MaterialTheme.typography.bodySmall,
             textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 }
@@ -389,7 +492,6 @@ private fun TypedInput(state: UiState, vm: IncidentViewModel) {
 
 @Composable
 private fun SpeakPromptsRow(checked: Boolean, onChange: (Boolean) -> Unit) {
-    // The whole row is one toggle target with Switch semantics (label + state read together).
     Row(
         modifier = Modifier
             .fillMaxWidth()

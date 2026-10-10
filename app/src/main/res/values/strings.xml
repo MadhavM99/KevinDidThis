@@ -21,6 +21,9 @@
     <string name="rec_hear_hint">Listening — speak now</string>
     <string name="rec_transcript_label">Transcript</string>
     <string name="rec_transcript_hint">Fix any mistakes — this text goes to the assistant.</string>
+    <string name="rec_intro">Tap the mic and describe what happened.</string>
+    <string name="type_toggle_show">Type instead</string>
+    <string name="type_toggle_hide">Hide typing</string>
     <string name="rec_empty">I didn\'t hear anything — re-record or type it.</string>
     <string name="rec_review">Here is what I heard. Check it and fix anything wrong, then continue.</string>
     <string name="mic_busy_label">Working, please wait</string>

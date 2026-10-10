@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -21,6 +22,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -79,42 +81,54 @@ fun IncidentAssistantRoot(vm: IncidentViewModel) {
         else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
 
-    val stepText = stringResource(
-        when (state.step) {
-            Step.CAPTURE -> R.string.step_capture
-            Step.REVIEW -> R.string.step_review
-            Step.SUBMITTED -> R.string.step_done
-        }
-    )
+    // The capture step is the immersive assistant stage (no chrome);
+    // Review / Submitted keep the usual app bar + step header.
+    val immersive = state.step == Step.CAPTURE
 
     Scaffold(
+        containerColor = if (immersive) Color.Transparent else MaterialTheme.colorScheme.surface,
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        stringResource(R.string.app_name),
-                        modifier = Modifier.semantics { heading() },
-                    )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                ),
-            )
+            if (!immersive) {
+                TopAppBar(
+                    title = {
+                        Text(
+                            stringResource(R.string.app_name),
+                            modifier = Modifier.semantics { heading() },
+                        )
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        titleContentColor = MaterialTheme.colorScheme.onPrimary,
+                    ),
+                )
+            }
         },
     ) { padding ->
-        Column(Modifier.padding(padding)) {
-            Text(
-                text = stepText,
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            )
-            // paneTitle makes TalkBack announce the new screen when the step changes.
-            Box(Modifier.semantics { paneTitle = stepText }) {
-                when (state.step) {
-                    Step.CAPTURE -> CaptureScreen(state, vm, onStartRecording)
-                    Step.REVIEW -> ReviewScreen(state, vm)
-                    Step.SUBMITTED -> DoneScreen(state, vm)
+        Box(Modifier.fillMaxSize().padding(padding)) {
+            if (immersive) {
+                CaptureScreen(state, vm, onStartRecording)
+            } else {
+                val stepText = stringResource(
+                    when (state.step) {
+                        Step.REVIEW -> R.string.step_review
+                        Step.SUBMITTED -> R.string.step_done
+                        Step.CAPTURE -> R.string.step_capture
+                    }
+                )
+                Column(Modifier.fillMaxSize()) {
+                    Text(
+                        text = stepText,
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                    // paneTitle makes TalkBack announce the new screen when the step changes.
+                    Box(Modifier.fillMaxSize().semantics { paneTitle = stepText }) {
+                        when (state.step) {
+                            Step.REVIEW -> ReviewScreen(state, vm)
+                            Step.SUBMITTED -> DoneScreen(state, vm)
+                            Step.CAPTURE -> Unit // handled by the immersive branch
+                        }
+                    }
                 }
             }
         }
