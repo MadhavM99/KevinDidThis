@@ -258,6 +258,11 @@ the fixtures in `tools/forms/`.
 
 ### 4.1 Model recommendation
 
+> **Implemented (see `docs/LLM.md`):** Gemma-4-E2B-it Q4_0 GGUF on Qualcomm GenieX
+> (llama.cpp runtime, `ai/GemmaGenieXLlm.kt`). Qualcomm ships no Genie/QAIRT bundle for
+> Gemma 4 E2B, so the `genie_bundle` route below does not apply to it. The table is the
+> original proposal.
+
 | Role | Model | Why |
 |---|---|---|
 | Primary LLM | **Qwen3-4B-Instruct-2507** (w4a16 QAIRT bundle or GGUF Q4_0) | strong instruction following + JSON reliability, thinking mode can be disabled; supported on 8 Gen 3 |

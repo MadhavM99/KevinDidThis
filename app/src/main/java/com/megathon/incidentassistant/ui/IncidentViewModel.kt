@@ -1,6 +1,7 @@
 package com.megathon.incidentassistant.ui
 
 import android.content.Context
+import android.util.Log
 import android.view.accessibility.AccessibilityManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -9,17 +10,17 @@ import com.megathon.incidentassistant.AppConfig
 import com.megathon.incidentassistant.AppContainer
 import com.megathon.incidentassistant.IncidentApp
 import com.megathon.incidentassistant.R
-import com.megathon.incidentassistant.data.ReportIds
-import com.megathon.incidentassistant.form.ExtractionPromptBuilder
+import com.megathon.incidentassistant.ai.LlmStatus
 import com.megathon.incidentassistant.form.FieldStatus
 import com.megathon.incidentassistant.form.FieldType
 import com.megathon.incidentassistant.form.FieldValue
 import com.megathon.incidentassistant.form.FormField
 import com.megathon.incidentassistant.form.FormSchema
-import com.megathon.incidentassistant.form.FormState
-import com.megathon.incidentassistant.form.FormToolCall
-import com.megathon.incidentassistant.form.ReportJson
-import com.megathon.incidentassistant.form.ToolCallParser
+import com.megathon.incidentassistant.session.ExtractionEngine
+import com.megathon.incidentassistant.session.IncidentSession
+import com.megathon.incidentassistant.session.ReplyKind
+import com.megathon.incidentassistant.session.SessionPhase
+import com.megathon.incidentassistant.session.SessionReply
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -50,9 +51,15 @@ data class UiState(
     val values: Map<String, FieldValue> = emptyMap(),
     val followUpFieldId: String? = null,
     val followUpQuestion: String? = null,
+    /** The pending prompt is a yes/no confirmation (file the report, "not specified", ...). */
+    val followUpIsConfirmation: Boolean = false,
     val status: String = "",
     val speakPrompts: Boolean = true,
     val submittedId: String? = null,
+    /** True while extraction is the scripted placeholder (no Gemma model on the device). */
+    val usingPlaceholderLlm: Boolean = false,
+    /** On-device LLM load state, shown under the controls. */
+    val llmStatus: String = "",
 ) {
     fun field(fieldId: String): FormField? = schema.field(fieldId)
 
@@ -71,13 +78,15 @@ data class UiState(
  * Runs the pipeline on top of a dynamic form definition, recorder-style:
  *
  *   Start → speak (live ASR caption on screen) → Stop (or VAD closes) → review + edit the
- *   transcript → Continue → LLM extraction (tool calls) → normalize + merge →
- *   mandatory-field gate → (missing? ask) / (complete? review) → submit + server POST.
+ *   transcript → Continue → [IncidentSession] (fast intents → LLM extraction → validated
+ *   tool calls → mandatory-field gate → next question) → TTS speaks the reply → the user
+ *   records the answer → … → spoken summary → "yes" → local save + server POST.
  *
  * The transcript is ALWAYS shown and editable before it reaches the LLM, so transcription
  * mistakes are caught by the human instead of being extracted into the report.
  *
- * The AI stages are behind the ai/ seams; everything here is deterministic.
+ * This class owns the Android side (ASR/TTS lifecycle, UI state, widget); the
+ * conversation logic is the pure-Kotlin [IncidentSession], one per report draft.
  */
 class IncidentViewModel(
     private val appContext: Context,
@@ -88,8 +97,9 @@ class IncidentViewModel(
     val ui: StateFlow<UiState> = _ui.asStateFlow()
 
     private var schema: FormSchema = FormSchema(id = "")
-    private var formState: FormState = FormState(schema)
-    private var followUpField: FormField? = null
+    private val phrases = ResourcePhrases(appContext)
+    private val extraction = ExtractionEngine(container.llm, now = { ZonedDateTime.now().toString() })
+    private var session: IncidentSession = newSession(schema)
 
     /** Watches the ASR backend's end-of-speech signal (VAD closed the utterance). */
     private var autoStopJob: Job? = null
@@ -98,6 +108,14 @@ class IncidentViewModel(
 
     init {
         viewModelScope.launch { container.speechToText.prepare() }
+        // Load the LLM once at start-up (off the main thread inside the backend), so the
+        // first utterance does not pay for it. The model is reused for every turn.
+        viewModelScope.launch { container.llm.prepare() }
+        viewModelScope.launch {
+            container.llm.status.collect { status ->
+                _ui.update { it.copy(llmStatus = describe(status), usingPlaceholderLlm = container.usingPlaceholderLlm) }
+            }
+        }
         viewModelScope.launch {
             container.speechToText.partialTranscript.collect { partial ->
                 _ui.update { it.copy(partial = partial) }
@@ -114,13 +132,15 @@ class IncidentViewModel(
             return
         }
         schema = loaded
-        formState = FormState(loaded)
-        followUpField = null
+        session = newSession(loaded)
         _ui.update {
             it.copy(
                 loadingForm = false,
                 schema = loaded,
-                values = formState.entries(),
+                values = session.form.entries(),
+                followUpFieldId = null,
+                followUpQuestion = null,
+                followUpIsConfirmation = false,
                 transcript = "",
                 transcriptReady = false,
                 listening = false,
@@ -250,71 +270,46 @@ class IncidentViewModel(
         }
     }
 
-    /** One full turn: prompt -> LLM -> tool calls -> apply -> gate/policy. */
+    /** One full turn through the session; stale replies (draft reset meanwhile) are dropped. */
     private suspend fun process(text: String) {
         _ui.update { it.copy(transcript = text, processing = true) }
-        formState.beginUtterance()
-
-        val prompt = buildString {
-            append(ExtractionPromptBuilder.systemPrompt(schema, formState, ZonedDateTime.now().toString()))
-            appendLine()
-            appendLine()
-            append(ExtractionPromptBuilder.userPrompt(followUpField, text))
-        }
-        val raw = container.llm.generate(prompt)
-        val parsed = ToolCallParser.parse(raw)
-
-        for (call in parsed.calls) {
-            when (call) {
-                is FormToolCall.RecordFields -> call.updates.forEach { update ->
-                    formState.apply(
-                        fieldId = update.fieldId,
-                        rawValue = update.value,
-                        confidence = update.confidence,
-                        evidence = update.evidence,
-                        status = update.status,
-                    )
-                }
-                // The skeleton asks its own questions (deterministic policy below);
-                // submission is app-owned, never model-owned.
-                is FormToolCall.AskUser -> Unit
-                is FormToolCall.SubmitReport -> Unit
-            }
-        }
-        advance()
+        val current = session
+        val reply = current.onUtterance(text)
+        if (current !== session) return
+        applyReply(reply)
     }
 
-    /** The "mandatory fields present?" gate + next question. */
-    private fun advance() {
-        val missing = formState.missingRequired()
-        if (missing.isEmpty()) {
-            followUpField = null
-            val message = str(R.string.status_review_ready)
-            _ui.update {
-                it.copy(
-                    values = formState.entries(),
-                    step = Step.REVIEW,
-                    followUpFieldId = null,
-                    followUpQuestion = null,
-                    processing = false,
-                    status = message,
-                )
-            }
-            speakPrompt(message)
-        } else {
-            val next = missing.first()
-            followUpField = next
-            val question = next.question ?: str(R.string.ask_default, next.label.ifBlank { next.id })
-            _ui.update {
-                it.copy(
-                    values = formState.entries(),
-                    followUpFieldId = next.id,
-                    followUpQuestion = question,
-                    processing = false,
-                    status = question,
-                )
-            }
-            speakPrompt(question)
+    /** Shows and speaks what the session decided — the single place a turn reaches UI + TTS. */
+    private fun applyReply(reply: SessionReply) {
+        reply.metrics?.let { m ->
+            // Timings only: never transcripts or field values in logs.
+            Log.d(
+                TAG,
+                "turn total=${m.totalMs}ms llm=${m.llmMs}ms(${m.llmCalls}) prompt=${m.promptMs}ms " +
+                    "parse=${m.parseMs}ms apply=${m.applyMs}ms policy=${m.policyMs}ms " +
+                    "fast=${m.fastPath} failure=${m.llmFailure} phase=${reply.phase}",
+            )
+        }
+        val open = reply.phase != SessionPhase.SUBMITTED && reply.phase != SessionPhase.CANCELLED
+        _ui.update {
+            it.copy(
+                values = session.form.entries(),
+                processing = false,
+                status = reply.speech,
+                followUpFieldId = reply.pendingFieldIds.firstOrNull(),
+                followUpQuestion = reply.speech.takeIf { open },
+                followUpIsConfirmation = reply.kind == ReplyKind.CONFIRM,
+                step = if (reply.phase == SessionPhase.SUBMITTED) Step.SUBMITTED else it.step,
+                submittedId = reply.reportId ?: it.submittedId,
+            )
+        }
+        speakPrompt(reply.speech)
+        when (reply.phase) {
+            SessionPhase.SUBMITTED -> pushWidget(
+                str(R.string.widget_status_done) + " " + ZonedDateTime.now().format(clockFormat),
+            )
+            SessionPhase.CANCELLED -> resetDraft(stopSpeech = false) // let "discarded" finish
+            else -> pushWidget(str(R.string.widget_status_ready))
         }
     }
 
@@ -335,8 +330,8 @@ class IncidentViewModel(
     // ---------- Review ----------
 
     fun onFieldChanged(fieldId: String, value: String) {
-        formState.setDirect(fieldId, value)
-        _ui.update { it.copy(values = formState.entries()) }
+        session.form.setDirect(fieldId, value)
+        _ui.update { it.copy(values = session.form.entries()) }
     }
 
     fun onAddMore() {
@@ -355,58 +350,52 @@ class IncidentViewModel(
     }
 
     fun onReadReportAloud() {
+        val form = session.form
         val parts = schema.fields
-            .filter { formState.text(it.id).isNotBlank() }
+            .filter { form.text(it.id).isNotBlank() }
             .map { field ->
                 str(
                     R.string.field_spoken,
                     field.label.ifBlank { field.id },
-                    displayValue(field, formState.text(field.id)),
+                    displayValue(field, form.text(field.id)),
                 )
             }
         if (parts.isNotEmpty()) container.synthesizer.speak(parts.joinToString(" "))
     }
 
+    /** Review-screen Submit: the tap is the user's explicit confirmation; the gate still applies. */
     fun onSubmit() {
-        val missing = formState.missingRequired()
-        if (missing.isNotEmpty()) {
-            val names = missing.joinToString(", ") { it.label.ifBlank { it.id } }
-            val message = str(R.string.status_missing_submit, names)
-            _ui.update { it.copy(status = message) }
-            speakPrompt(message)
-            return
-        }
+        if (_ui.value.processing) return
+        _ui.update { it.copy(processing = true) }
         viewModelScope.launch {
-            val reportId = ReportIds.newReportId()
-            val json = ReportJson.build(schema, formState, reportId, ZonedDateTime.now().toString())
-            val saved = container.repository.submit(reportId, json)   // local first: never lose it
-            val delivery = container.reportSubmitter.submit(json, reportId)
-            val message = if (delivery.ok) {
-                str(R.string.status_submitted, saved.id)
-            } else {
-                str(R.string.status_submitted_local, saved.id)
+            val current = session
+            try {
+                val reply = current.submitConfirmedByUser()
+                if (current === session) applyReply(reply)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fail()
             }
-            _ui.update { it.copy(step = Step.SUBMITTED, submittedId = saved.id, status = message) }
-            pushWidget(
-                str(R.string.widget_status_done) + " " + ZonedDateTime.now().format(clockFormat),
-            )
-            speakPrompt(message)
         }
     }
 
-    fun onNewReport() {
-        container.synthesizer.stop()
+    fun onNewReport() = resetDraft(stopSpeech = true)
+
+    private fun resetDraft(stopSpeech: Boolean) {
+        if (stopSpeech) container.synthesizer.stop()
         autoStopJob?.cancel()
         autoStopJob = null
-        formState.reset()
-        followUpField = null
+        session = newSession(schema) // an in-flight turn of the old draft is dropped in process()
         _ui.update {
             UiState(
                 schema = schema,
-                values = formState.entries(),
+                values = session.form.entries(),
                 status = str(R.string.status_ready),
                 speakPrompts = it.speakPrompts,
                 loadingForm = false,
+                usingPlaceholderLlm = it.usingPlaceholderLlm,
+                llmStatus = it.llmStatus,
             )
         }
         pushWidget(str(R.string.widget_status_ready))
@@ -423,6 +412,22 @@ class IncidentViewModel(
             return value.replaceFirstChar { it.uppercase() }
         }
         return value
+    }
+
+    private fun newSession(form: FormSchema) = IncidentSession(
+        schema = form,
+        extraction = extraction,
+        phrases = phrases,
+        repository = container.repository,
+        submitter = container.reportSubmitter,
+        now = { ZonedDateTime.now().toString() },
+    )
+
+    private fun describe(status: LlmStatus): String = when (status) {
+        LlmStatus.NotLoaded -> ""
+        LlmStatus.Loading -> str(R.string.llm_loading)
+        is LlmStatus.Ready -> if (container.usingPlaceholderLlm) "" else str(R.string.llm_ready, status.detail)
+        is LlmStatus.Failed -> str(R.string.model_unavailable, status.reason)
     }
 
     private fun fail() {
@@ -459,6 +464,11 @@ class IncidentViewModel(
         autoStopJob?.cancel()
         container.synthesizer.stop()
         container.speechToText.release()
+        container.llm.release()
+    }
+
+    private companion object {
+        const val TAG = "IncidentVM"
     }
 }
 

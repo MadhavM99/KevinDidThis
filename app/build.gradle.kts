@@ -11,7 +11,7 @@ android {
 
     defaultConfig {
         applicationId = "com.megathon.incidentassistant"
-        minSdk = 26
+        minSdk = 27 // GenieX (on-device Gemma) AAR declares minSdkVersion 27
         targetSdk = 34
         versionCode = 1
         versionName = "0.1.0"
@@ -31,7 +31,19 @@ android {
         getByName("main") { jniLibs.srcDir("libs") }
     }
     packaging {
-        jniLibs { useLegacyPackaging = true }
+        jniLibs {
+            useLegacyPackaging = true
+            // Both the Whisper SDK copy in app/libs (scripts/fetch-whisper-sdk.sh, QAIRT
+            // 2.50) and the GenieX AAR ship these QNN host libs. Gemma runs on GenieX's
+            // llama.cpp runtime (libggml-htp-v75.so), which does not use them, so the app's
+            // own copies — the ones Whisper was validated with — are kept.
+            pickFirsts += listOf(
+                "lib/arm64-v8a/libQnnHtp.so",
+                "lib/arm64-v8a/libQnnSystem.so",
+                "lib/arm64-v8a/libQnnHtpV79Stub.so",
+                "lib/arm64-v8a/libQnnHtpV81Stub.so",
+            )
+        }
     }
 }
 
@@ -47,6 +59,9 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
+    // Qualcomm GenieX: on-device Gemma 4 E2B (GGUF, llama.cpp runtime, Hexagon v75/Adreno/CPU).
+    // See docs/LLM.md for why this runtime and not a Genie/QAIRT bundle.
+    implementation("com.qualcomm.qti:geniex-android:0.7.1")
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
 

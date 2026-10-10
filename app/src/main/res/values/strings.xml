@@ -8,7 +8,10 @@
     <string name="step_done">Step 3 of 3: Submitted</string>
 
     <!-- Capture screen -->
-    <string name="placeholder_banner">Demo mode: speech recognition and language models are placeholders. Plug in your on-device models to enable real extraction.</string>
+    <string name="placeholder_banner">Demo mode: no on-device language model was found, so extraction is scripted. Push the Gemma model (scripts/push-gemma-model.sh) to enable real extraction.</string>
+    <string name="llm_loading">Loading the on-device language model…</string>
+    <string name="llm_ready">Language model: %1$s</string>
+    <string name="model_unavailable">The on-device language model could not be loaded (%1$s). Answers to direct questions still work.</string>
     <!-- Recorder flow: Start → live caption → Stop → review transcript → Continue -->
     <string name="rec_start">Start recording</string>
     <string name="rec_stop">Stop and review</string>
@@ -26,6 +29,7 @@
     <string name="type_answer_label">Type your answer</string>
     <string name="send">Send</string>
     <string name="followup_heading">One more detail needed</string>
+    <string name="confirm_heading">Ready to file</string>
     <string name="followup_repeat">Repeat question</string>
     <string name="skip_to_review">Skip to review</string>
     <string name="speak_prompts">Speak prompts aloud</string>
@@ -42,11 +46,32 @@
     <string name="status_error">Something went wrong while processing. Please try again.</string>
     <string name="status_loading_form">Loading the report form…</string>
     <string name="status_form_error">Could not load the report form from the server. Check the server URL, then tap Refresh form.</string>
-    <string name="status_submitted_local">Report %1$s saved on this device. The proxy did not accept it yet; it will be retried.</string>
+    <string name="status_submitted_local">Report %1$s is saved on this device, but the report server did not accept it.</string>
     <string name="ask_default">What is the %1$s?</string>
     <string name="status_add_more">Add more details by voice or text.</string>
     <string name="status_missing_submit">Cannot submit yet. Missing required fields: %1$s.</string>
     <string name="status_submitted">Report %1$s submitted.</string>
+
+    <!-- Conversation (field wording itself comes from the form definition) -->
+    <string name="ask_again">Sorry, I didn\'t catch that. %1$s</string>
+    <string name="ask_again_options">Sorry, I didn\'t catch the %1$s. Please say %2$s.</string>
+    <string name="ask_again_cancel_hint">You can also fill it in on the review screen, or say cancel.</string>
+    <string name="offer_unknown">I\'ll mark the %1$s as not specified. Is that okay?</string>
+    <string name="confirm_value">Just to check, the %1$s is %2$s. Is that right?</string>
+    <string name="ask_optional">Anything to add about %1$s? If not, just say no.</string>
+    <string name="not_specified">not specified</string>
+    <string name="confirm_report">Here is the report. %1$s Should I file it?</string>
+    <string name="what_to_change">Okay. What should I change?</string>
+    <string name="no_change_heard">I didn\'t hear a change.</string>
+    <string name="did_not_understand">Sorry, I couldn\'t work that out.</string>
+    <string name="did_not_hear">I didn\'t hear anything.</string>
+    <string name="confirm_cancel">Discard this report?</string>
+    <string name="cancelled">Report discarded. Nothing was filed.</string>
+    <string name="save_failed">I couldn\'t save the report on this device, so it was not filed. Please try again.</string>
+    <string name="already_filed">Report %1$s is already filed.</string>
+    <string name="session_closed">This report is closed. Start a new report to continue.</string>
+    <string name="or_two">%1$s or %2$s</string>
+    <string name="or_many">%1$s, or %2$s</string>
 
     <!-- Review screen -->
     <string name="review_all_complete">All required fields are complete.</string>

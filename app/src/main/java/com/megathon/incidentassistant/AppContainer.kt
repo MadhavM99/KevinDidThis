@@ -3,6 +3,8 @@ package com.megathon.incidentassistant
 import android.app.Application
 import android.content.Context
 import com.megathon.incidentassistant.ai.AndroidSpeechSynthesizer
+import com.megathon.incidentassistant.ai.GemmaGenieXLlm
+import com.megathon.incidentassistant.ai.GemmaModels
 import com.megathon.incidentassistant.ai.LlmBackend
 import com.megathon.incidentassistant.ai.MeloTtsSpeechSynthesizer
 import com.megathon.incidentassistant.ai.PlaceholderLlm
@@ -20,13 +22,6 @@ import com.megathon.incidentassistant.net.HttpReportSubmitter
 import com.megathon.incidentassistant.net.ReportSubmitter
 
 object AppConfig {
-    /**
-     * Hides the "demo mode" banner while the LLM stage is still a placeholder. ASR is
-     * already real (Qualcomm Whisper SDK) as soon as the model files exist on the device —
-     * see `ai/WhisperModels` and `scripts/push-whisper-models.sh`.
-     */
-    const val USING_PLACEHOLDER_MODELS = true
-
     /**
      * Base URL of the server that serves form definitions and receives reports
      * (contract: docs/PROXY_API.md). The app is a pure client and bundles **no forms**:
@@ -58,7 +53,14 @@ class AppContainer(context: Context) {
         if (WhisperModelsAvailable.check(appContext)) WhisperSpeechToText(appContext)
         else PlaceholderSpeechToText()
 
-    val llm: LlmBackend = PlaceholderLlm()                              // TODO: on-device LLM
+    /**
+     * Use on-device Gemma 4 E2B (GenieX llama.cpp runtime) when its GGUF is on the device
+     * (`scripts/push-gemma-model.sh`), otherwise the scripted placeholder so the app still
+     * runs end to end on a phone without the 3 GB model. See docs/LLM.md.
+     */
+    val llm: LlmBackend =
+        GemmaModels.resolve(appContext)?.let { GemmaGenieXLlm(appContext, it) }
+            ?: PlaceholderLlm()
 
     /**
      * Use the real Qualcomm MeloTTS SDK when the combined model is on the device, otherwise
@@ -73,6 +75,9 @@ class AppContainer(context: Context) {
 
     /** For logging / UI: which ASR implementation is actually wired up. */
     val usingRealAsr: Boolean = speechToText is WhisperSpeechToText
+
+    /** Drives the "demo mode" banner: true while extraction is the scripted placeholder. */
+    val usingPlaceholderLlm: Boolean = llm is PlaceholderLlm
 }
 
 class IncidentApp : Application() {

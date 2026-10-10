@@ -63,7 +63,6 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.megathon.incidentassistant.AppConfig
 import com.megathon.incidentassistant.R
 
 private val MinTouch = 56.dp // above the 48dp Android minimum
@@ -87,7 +86,7 @@ fun CaptureScreen(state: UiState, vm: IncidentViewModel, onStartRecording: () ->
     ) {
         StatusText(state.status, active = state.listening || state.processing || state.loadingForm)
 
-        state.followUpQuestion?.let { FollowUpCard(it, vm) }
+        state.followUpQuestion?.let { FollowUpCard(it, state.followUpIsConfirmation, vm) }
 
         RecorderCard(state, vm, onStartRecording)
 
@@ -103,7 +102,16 @@ fun CaptureScreen(state: UiState, vm: IncidentViewModel, onStartRecording: () ->
             modifier = Modifier.heightIn(min = MinTouch),
         ) { Text(stringResource(R.string.refresh_form)) }
 
-        if (AppConfig.USING_PLACEHOLDER_MODELS) {
+        if (state.llmStatus.isNotBlank()) {
+            Text(
+                text = state.llmStatus,
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            )
+        }
+
+        if (state.usingPlaceholderLlm) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -316,7 +324,7 @@ private fun StatusText(status: String, active: Boolean) {
 }
 
 @Composable
-private fun FollowUpCard(question: String, vm: IncidentViewModel) {
+private fun FollowUpCard(question: String, isConfirmation: Boolean, vm: IncidentViewModel) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -326,7 +334,7 @@ private fun FollowUpCard(question: String, vm: IncidentViewModel) {
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                stringResource(R.string.followup_heading),
+                stringResource(if (isConfirmation) R.string.confirm_heading else R.string.followup_heading),
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.semantics { heading() },
             )

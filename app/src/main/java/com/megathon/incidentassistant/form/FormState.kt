@@ -178,6 +178,28 @@ class FormState(val schema: FormSchema) {
         return ApplyResult(fieldId, accepted = true)
     }
 
+    /** The user confirmed an unsure (AMBIGUOUS) value out loud — it now counts as filled. */
+    fun confirm(fieldId: String, evidence: String? = null): ApplyResult {
+        val existing = values[fieldId]
+        if (existing == null || existing.status != FieldStatus.AMBIGUOUS) {
+            return ApplyResult(fieldId, accepted = false, reason = "nothing to confirm")
+        }
+        values[fieldId] = existing.copy(
+            status = FieldStatus.FILLED,
+            confidence = maxOf(existing.confidence, CONFIRMED_CONFIDENCE),
+            evidence = evidence ?: existing.evidence,
+            utterance = utteranceCounter,
+        )
+        return ApplyResult(fieldId, accepted = true)
+    }
+
+    /** The user rejected a value out loud — the field is empty again and will be re-asked. */
+    fun clear(fieldId: String): ApplyResult {
+        if (schema.field(fieldId) == null) return ApplyResult(fieldId, accepted = false, reason = "unknown field")
+        values.remove(fieldId)
+        return ApplyResult(fieldId, accepted = true)
+    }
+
     /** Direct edit from the Review screen — the user is authoritative (no merge rules). */
     fun setDirect(fieldId: String, value: String): ApplyResult {
         val field = schema.field(fieldId)
@@ -203,5 +225,9 @@ class FormState(val schema: FormSchema) {
     fun reset() {
         values.clear()
         utteranceCounter = 0
+    }
+
+    private companion object {
+        const val CONFIRMED_CONFIDENCE = 0.8
     }
 }

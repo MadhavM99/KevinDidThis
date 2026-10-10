@@ -1,6 +1,7 @@
 package com.megathon.incidentassistant.ai
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -40,8 +41,37 @@ interface SpeechToText {
  */
 interface LlmBackend {
     val id: String
+
+    /** Load / warm up the model once. Idempotent; backends with nothing to load keep the default. */
+    suspend fun prepare() = Unit
+
+    /**
+     * Prompt in, raw model text out. Throws [LlmException] when the runtime fails; callers
+     * treat that as a recoverable turn error, never a crash.
+     */
     suspend fun generate(prompt: String): String
+
+    /** Free native resources. A later [prepare]/[generate] loads the model again. */
+    fun release() = Unit
+
+    /** Load state for the UI (banner / backend chip). */
+    val status: StateFlow<LlmStatus> get() = LlmStatus.ALWAYS_READY
 }
+
+sealed interface LlmStatus {
+    data object NotLoaded : LlmStatus
+    data object Loading : LlmStatus
+    /** [detail] names the model + runtime + compute unit actually in use. */
+    data class Ready(val detail: String, val loadMs: Long) : LlmStatus
+    data class Failed(val reason: String) : LlmStatus
+
+    companion object {
+        /** For backends that have nothing to load (placeholder, fakes). */
+        val ALWAYS_READY: StateFlow<LlmStatus> = MutableStateFlow(Ready(detail = "no model", loadMs = 0))
+    }
+}
+
+class LlmException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /** Pipeline stage 6 — Text-to-Speech output. */
 interface SpeechSynthesizer {

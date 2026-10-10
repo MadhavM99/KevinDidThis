@@ -23,6 +23,8 @@ object ReportJson {
         reportId: String,
         nowIso: String,
         status: String = "submitted",
+        /** Stage timings (§8 `metrics`), e.g. `llm_ms`. Omitted from the JSON when empty. */
+        metrics: Map<String, Long> = emptyMap(),
     ): String {
         val root = buildJsonObject {
             put("report_id", reportId)
@@ -44,8 +46,15 @@ object ReportJson {
                 }
             }
             putJsonArray("missing_information") {
+                // Required fields still empty, plus those the user explicitly could not
+                // answer ("not specified", §5.2) — both are flagged for the recipient.
                 for (field in schema.requiredFields) {
-                    if (!state.isSatisfied(field.id)) add(field.id)
+                    if (state.get(field.id).status != FieldStatus.FILLED) add(field.id)
+                }
+            }
+            if (metrics.isNotEmpty()) {
+                putJsonObject("metrics") {
+                    metrics.forEach { (name, value) -> put(name, value) }
                 }
             }
         }

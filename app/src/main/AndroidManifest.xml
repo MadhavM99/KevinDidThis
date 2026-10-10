@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Microphone for voice capture. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -22,9 +23,11 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.IncidentAssistant">
 
+        <!-- tools:replace: the GenieX AAR declares the same library as optional. -->
         <uses-native-library
             android:name="libcdsprpc.so"
-            android:required="true" />
+            android:required="true"
+            tools:replace="android:required" />
 
         <activity
             android:name=".MainActivity"
