@@ -1,0 +1,51 @@
+# ---------- Gradle ----------
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# ---------- Local SDK config (machine-specific sdk.dir) ----------
+local.properties
+
+# ---------- Android build outputs ----------
+*.ap_
+*.apk
+*.aab
+*.aar
+*.dex
+captures/
+.externalNativeBuild/
+.cxx/
+*.hprof
+lint/intermediates/
+lint/tmp/
+lint/reports/
+
+# ---------- Signing / secrets (never commit) ----------
+*.jks
+*.keystore
+*.p12
+*.pepk
+keystore.properties
+secrets.properties
+
+# ---------- Kotlin ----------
+.kotlin/
+
+# ---------- IDE / editor ----------
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.navigation/
+
+# ---------- OS / misc ----------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+*.log
+*.tmp
+*.bak
