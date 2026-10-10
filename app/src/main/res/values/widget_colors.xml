@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Widget colors (match the app's dark palette). -->
+    <color name="widget_surface">#1F2430</color>
+    <color name="widget_surface_stroke">#2A3042</color>
+    <color name="widget_mic_circle">#0B3D91</color>
+    <color name="widget_text_accent">#B4CAFF</color>
+    <color name="widget_text_primary">#E6EBFA</color>
+    <color name="widget_text_secondary">#9AA4B2</color>
+</resources>

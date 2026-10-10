@@ -21,12 +21,14 @@ import com.megathon.incidentassistant.form.FormToolCall
 import com.megathon.incidentassistant.form.ReportJson
 import com.megathon.incidentassistant.form.ToolCallParser
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 
 enum class Step { CAPTURE, REVIEW, SUBMITTED }
 
@@ -79,6 +81,14 @@ class IncidentViewModel(
     private var formState: FormState = FormState(schema)
     private var followUpField: FormField? = null
 
+    /** A widget tap asked us to start recording; survives form loading + permission dance. */
+    private var autoListenQueued = false
+
+    /** Watches the ASR backend's end-of-speech signal for single-shot mode. */
+    private var autoStopJob: Job? = null
+
+    private val clockFormat = DateTimeFormatter.ofPattern("HH:mm")
+
     init {
         viewModelScope.launch { container.speechToText.prepare() }
         viewModelScope.launch {
@@ -107,6 +117,31 @@ class IncidentViewModel(
                 status = str(R.string.status_ready),
             )
         }
+        pushWidget(str(R.string.widget_status_ready))
+        startIfPossible()
+    }
+
+    // ---------- Single-shot / widget flow ----------
+
+    /**
+     * Called on a widget tap (EXTRA_AUTO_LISTEN): the mic button flow but queued, so it
+     * survives form loading and works from the home screen.
+     */
+    fun requestAutoListen() {
+        autoListenQueued = true
+        startIfPossible()
+    }
+
+    /** Mic-permission launcher callback: routes to the queued widget start or the mic button. */
+    fun onMicPermissionGranted() {
+        if (autoListenQueued) startIfPossible() else onMicTapped()
+    }
+
+    private fun startIfPossible() {
+        val state = _ui.value
+        if (state.loadingForm || state.processing || state.listening || schema.fields.isEmpty()) return
+        autoListenQueued = false
+        startListening()
     }
 
     /** Re-fetch the form definition from the server (starts a fresh draft). */
@@ -129,11 +164,21 @@ class IncidentViewModel(
     private fun startListening() {
         container.synthesizer.stop() // never talk over the user
         _ui.update { it.copy(listening = true, partial = "", status = str(R.string.status_listening)) }
+        pushWidget(str(R.string.widget_status_listening))
         viewModelScope.launch { container.speechToText.startListening() }
+        // Single-shot: when the ASR backend's VAD closes the utterance, stop + process
+        // without another tap (backends without VAD never emit; tap-to-stop still works).
+        autoStopJob?.cancel()
+        autoStopJob = viewModelScope.launch {
+            container.speechToText.utteranceFinished.collect { stopAndProcess() }
+        }
     }
 
     private fun stopAndProcess() {
+        autoStopJob?.cancel()
+        autoStopJob = null
         _ui.update { it.copy(listening = false, processing = true, status = str(R.string.status_processing)) }
+        pushWidget(str(R.string.widget_status_working))
         viewModelScope.launch {
             try {
                 val text = container.speechToText.stopListening()
@@ -301,12 +346,17 @@ class IncidentViewModel(
                 str(R.string.status_submitted_local, saved.id)
             }
             _ui.update { it.copy(step = Step.SUBMITTED, submittedId = saved.id, status = message) }
+            pushWidget(
+                str(R.string.widget_status_done) + " " + ZonedDateTime.now().format(clockFormat)
+            )
             speakPrompt(message)
         }
     }
 
     fun onNewReport() {
         container.synthesizer.stop()
+        autoStopJob?.cancel()
+        autoStopJob = null
         formState.reset()
         followUpField = null
         _ui.update {
@@ -351,6 +401,9 @@ class IncidentViewModel(
         if (_ui.value.speakPrompts && !screenReaderActive()) container.synthesizer.speak(text)
     }
 
+    /** Mirrors the assistant state on the home-screen widget. */
+    private fun pushWidget(status: String) = IncidentWidget.pushStatus(appContext, status)
+
     private fun screenReaderActive(): Boolean {
         val manager = appContext.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
         return manager.isEnabled && manager.isTouchExplorationEnabled
@@ -359,6 +412,7 @@ class IncidentViewModel(
     private fun str(resId: Int, vararg args: Any): String = appContext.getString(resId, *args)
 
     override fun onCleared() {
+        autoStopJob?.cancel()
         container.synthesizer.stop()
         container.speechToText.release()
     }

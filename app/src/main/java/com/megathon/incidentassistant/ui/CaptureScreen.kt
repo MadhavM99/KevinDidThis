@@ -1,5 +1,11 @@
 package com.megathon.incidentassistant.ui
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -15,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -32,12 +39,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -66,7 +77,7 @@ fun CaptureScreen(state: UiState, vm: IncidentViewModel, onMic: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        StatusText(state.status)
+        StatusText(state.status, active = state.listening || state.processing || state.loadingForm)
 
         state.followUpQuestion?.let { FollowUpCard(it, vm) }
 
@@ -102,17 +113,41 @@ fun CaptureScreen(state: UiState, vm: IncidentViewModel, onMic: () -> Unit) {
     }
 }
 
-/** Live region: TalkBack reads this whenever the text changes, without moving focus. */
+/** Siri-style status pill with a pulsing dot while the assistant is listening/working.
+ * Live region: TalkBack reads this whenever the text changes, without moving focus. */
 @Composable
-private fun StatusText(status: String) {
-    Text(
-        text = status,
-        style = MaterialTheme.typography.titleMedium,
-        textAlign = TextAlign.Center,
-        modifier = Modifier
-            .fillMaxWidth()
-            .semantics { liveRegion = LiveRegionMode.Polite },
-    )
+private fun StatusText(status: String, active: Boolean) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = if (active) MaterialTheme.colorScheme.primaryContainer
+        else MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val pulse = rememberInfiniteTransition(label = "statusPulse")
+            val dotAlpha by pulse.animateFloat(
+                initialValue = 0.35f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(tween(650), RepeatMode.Reverse),
+                label = "dotAlpha",
+            )
+            Box(
+                Modifier
+                    .size(10.dp)
+                    .alpha(dotAlpha)
+                    .clip(CircleShape)
+                    .background(
+                        if (active) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.primary
+                    ),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(status, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+        }
+    }
 }
 
 @Composable
@@ -128,36 +163,57 @@ private fun MicButton(listening: Boolean, busy: Boolean, onClick: () -> Unit) {
     )
     // Tap-to-start / tap-to-stop (not press-and-hold) so it works with TalkBack,
     // Switch Access, voice access and limited motor control.
-    Button(
-        onClick = onClick,
-        enabled = !busy,
-        shape = CircleShape,
-        contentPadding = PaddingValues(0.dp),
-        colors = if (listening) {
-            ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.error,
-                contentColor = MaterialTheme.colorScheme.onError,
+    Box(contentAlignment = Alignment.Center) {
+        // Siri-style pulse: a ring breathes behind the mic while recording (VAD may also
+        // finish the utterance automatically — single-shot).
+        if (listening) {
+            val pulse = rememberInfiniteTransition(label = "micPulse")
+            val ringScale by pulse.animateFloat(
+                initialValue = 1f,
+                targetValue = 1.22f,
+                animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
+                label = "ringScale",
             )
-        } else ButtonDefaults.buttonColors(),
-        modifier = Modifier
-            .size(136.dp)
-            .semantics {
-                contentDescription = desc
-                stateDescription = stateDesc
-            },
-    ) {
-        if (busy) {
-            CircularProgressIndicator(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clearAndSetSemantics { }, // status text already announces progress
+            Box(
+                Modifier
+                    .size(136.dp)
+                    .scale(ringScale)
+                    .alpha(0.45f)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.errorContainer),
             )
-        } else {
-            Icon(
-                imageVector = if (listening) Icons.Filled.Stop else Icons.Filled.Mic,
-                contentDescription = null, // button carries the description
-                modifier = Modifier.size(64.dp),
-            )
+        }
+        Button(
+            onClick = onClick,
+            enabled = !busy,
+            shape = CircleShape,
+            contentPadding = PaddingValues(0.dp),
+            colors = if (listening) {
+                ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    contentColor = MaterialTheme.colorScheme.onError,
+                )
+            } else ButtonDefaults.buttonColors(),
+            modifier = Modifier
+                .size(136.dp)
+                .semantics {
+                    contentDescription = desc
+                    stateDescription = stateDesc
+                },
+        ) {
+            if (busy) {
+                CircularProgressIndicator(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clearAndSetSemantics { }, // status text already announces progress
+                )
+            } else {
+                Icon(
+                    imageVector = if (listening) Icons.Filled.Stop else Icons.Filled.Mic,
+                    contentDescription = null, // button carries the description
+                    modifier = Modifier.size(64.dp),
+                )
+            }
         }
     }
     // Visible text label: state is never conveyed by colour or icon alone.

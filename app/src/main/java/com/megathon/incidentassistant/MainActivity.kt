@@ -1,6 +1,7 @@
 package com.megathon.incidentassistant
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -19,7 +20,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
@@ -44,20 +48,51 @@ class MainActivity : ComponentActivity() {
         IncidentViewModelFactory(application as IncidentApp)
     }
 
+    /**
+     * Set while a widget tap is waiting for the mic-permission dialog. Compose state so
+     * the root can observe it and fire the launcher from an effect (safe after resume).
+     */
+    private val widgetPermissionPending = mutableStateOf(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             IncidentTheme {
-                IncidentAssistantRoot(vm)
+                IncidentAssistantRoot(vm, widgetPermissionPending)
             }
         }
+        if (intent?.getBooleanExtra(EXTRA_AUTO_LISTEN, false) == true) onWidgetTap()
+    }
+
+    /** Widget taps while the activity is already alive (singleTop). */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_AUTO_LISTEN, false)) onWidgetTap()
+    }
+
+    /** Widget tap: start listening right away; ask for mic permission if needed. */
+    private fun onWidgetTap() {
+        val granted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.RECORD_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            vm.requestAutoListen()
+        } else {
+            widgetPermissionPending.value = true
+        }
+    }
+
+    companion object {
+        /** Set by [com.megathon.incidentassistant.ui.IncidentWidget]: record immediately. */
+        const val EXTRA_AUTO_LISTEN = "com.megathon.incidentassistant.extra.AUTO_LISTEN"
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun IncidentAssistantRoot(vm: IncidentViewModel) {
+fun IncidentAssistantRoot(vm: IncidentViewModel, widgetPermissionPending: MutableState<Boolean>) {
     val state by vm.ui.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
@@ -65,13 +100,21 @@ fun IncidentAssistantRoot(vm: IncidentViewModel) {
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) vm.onMicTapped() else vm.onMicPermissionDenied()
+        if (granted) vm.onMicPermissionGranted() else vm.onMicPermissionDenied()
+    }
+
+    // A widget tap that needs the permission dialog: fire it once the launcher is live.
+    if (widgetPermissionPending.value) {
+        LaunchedEffect(Unit) {
+            widgetPermissionPending.value = false
+            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
     }
 
     val onMic: () -> Unit = {
         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
         val granted = ContextCompat.checkSelfPermission(
-            context, Manifest.permission.RECORD_AUDIO
+            context, Manifest.permission.RECORD_AUDIO,
         ) == PackageManager.PERMISSION_GRANTED
         if (state.listening || granted) vm.onMicTapped()
         else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)

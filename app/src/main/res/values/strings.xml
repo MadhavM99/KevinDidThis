@@ -62,4 +62,13 @@
 
     <!-- Field labels and questions come from the dynamic form definition served by the
          server (docs/DESIGN.md §3.1). -->
+<!-- Widget -->
+    <string name="widget_title">Incident Report</string>
+    <string name="widget_speak">Tap, speak, done</string>
+    <string name="widget_description">One-tap voice incident reporting</string>
+    <string name="widget_status_ready">Ready — tap to report</string>
+    <string name="widget_status_listening">Listening…</string>
+    <string name="widget_status_working">Working…</string>
+    <string name="widget_status_done">Filed</string>
+
 </resources>
