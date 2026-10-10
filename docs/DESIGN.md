@@ -75,7 +75,7 @@ Last updated: 2026-10-10.
 │                                │ speech during TTS → barge-in (stop playback)            │    │
 │                                ▼                                                         ▼    │
 │  ┌───────────────────────┐    ┌──────────────────────────────────────────────────────────────┐│
-│  │  UI (Compose)         │    │                  IncidentSession  (state machine)           ││
+│  │  UI (Compose)         │    │                  Session          (state machine)           ││
 │  │  • live transcript    │◀───│  fast intents → ExtractionEngine → ToolExecutor →           ││
 │  │  • form auto-fill     │    │  DialogPolicy → (AskField | Confirm | Submit) →             ││
 │  │  • JSON view + submit │    │  TtsBackend.speak(text)                                     ││
@@ -86,7 +86,7 @@ Last updated: 2026-10-10.
 │                        │ NPU, streaming callback)   │          │ NPU / Android TTS)    │     │
 │                        └────────────────────────────┘          └───────────────────────┘     │
 │                                                                                              │
-│  FormState (schema-driven) ──▶ ReportBuilder ──▶ ReportSink: file | share | HTTP POST         │
+│  FormState (schema-driven) ──▶ ReportJson    ──▶ ReportRepo: local save + proxy POST           │
 └──────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -94,7 +94,7 @@ Last updated: 2026-10-10.
 
 1. Mic frames (PCM16, 16 kHz, 20 ms) → VAD.
 2. Utterance ends on ~500 ms trailing silence → `AsrBackend.finalize()`.
-3. Final transcript → `IncidentSession.onUtterance(text)`.
+3. Final transcript → `IncidentViewModel.onUtterance(text)`.
 4. Fast-intent check (yes/no/skip/stop/repeat) before any LLM cost.
 5. `ExtractionEngine`: build prompt (schema digest + current form state + pending
    question + last utterance) → `LlmBackend.generate()` → parse tool calls.
@@ -119,7 +119,7 @@ Last updated: 2026-10-10.
 
 ### 2.3 Threading model
 
-- One `IncidentSession` actor on a single-threaded dispatcher → turns never interleave.
+- One session actor (`IncidentViewModel`) on a single-threaded dispatcher → turns never interleave.
 - ASR, LLM, TTS run on `Dispatchers.Default`; UI observes `StateFlow<UiState>`.
 - Audio capture on its own thread (AudioRecord); VAD frames fed via channel.
 - Barge-in: VAD speech onset → `TtsBackend.stop()` immediately (flush AudioTrack).
@@ -128,7 +128,15 @@ Last updated: 2026-10-10.
 
 ## 3. Form model (user-defined)
 
-### 3.1 Schema asset — `assets/forms/incident_report.json`
+### 3.1 Form definition — dynamic JSON (bundled asset + proxy API)
+
+The form is **data, not code**. Every field carries its full metadata — mandatory flag,
+answer type, options (with labels + aliases), the question to ask, grouping, and
+**keywords** — and the app generates the LLM extraction prompt from it at runtime. Any
+model (Qwen, Llama, …) and any use-case works with zero app changes; admins update the
+definition through the proxy API (§8.1). JSON is the wire format (an XML parser can be
+swapped in later if ever needed). Canonical copy:
+`app/src/main/assets/forms/incident_report.json`.
 
 ```jsonc
 {
@@ -138,61 +146,56 @@ Last updated: 2026-10-10.
   "fields": [
     {
       "id": "incident_type", "label": "Incident Type", "type": "enum", "required": true,
-      "prompt": "What kind of incident is it?",
-      "enum": [
-        { "value": "water_leak",      "label": "Water leak",      "aliases": ["leak", "flood", "water damage", "pipe burst"] },
-        { "value": "fire",            "label": "Fire",            "aliases": ["smoke", "burning"] },
-        { "value": "electrical",      "label": "Electrical",      "aliases": ["power", "short circuit", "sparking"] },
-        { "value": "chemical_spill",  "label": "Chemical spill",  "aliases": ["spill", "hazardous material"] },
-        { "value": "equipment_failure","label": "Equipment failure","aliases": ["machine down", "broken"] },
-        { "value": "slip_trip_fall",  "label": "Slip / trip / fall","aliases": ["fell", "tripped"] },
-        { "value": "security",        "label": "Security",        "aliases": ["theft", "intruder"] },
-        { "value": "medical",         "label": "Medical",         "aliases": ["injury", "hurt"] },
-        { "value": "other",           "label": "Other",           "aliases": [] }
+      "question": "What kind of incident is it?",
+      "keywords": ["incident type", "kind of incident"],
+      "options": [
+        { "value": "water_leak",        "label": "Water leak",        "aliases": ["leak", "flood", "water damage", "pipe burst"] },
+        { "value": "fire",              "label": "Fire",              "aliases": ["smoke", "burning"] },
+        { "value": "electrical",        "label": "Electrical",        "aliases": ["power", "short circuit", "sparking"] },
+        { "value": "chemical_spill",    "label": "Chemical spill",    "aliases": ["spill", "hazardous material"] },
+        { "value": "equipment_failure", "label": "Equipment failure", "aliases": ["machine down", "broken"] },
+        { "value": "slip_trip_fall",    "label": "Slip / trip / fall", "aliases": ["fell", "tripped"] },
+        { "value": "security",          "label": "Security",          "aliases": ["theft", "intruder"] },
+        { "value": "medical",           "label": "Medical",           "aliases": ["injury", "hurt"] },
+        { "value": "other",             "label": "Other",             "aliases": [] }
       ]
     },
     {
       "id": "severity", "label": "Severity", "type": "enum", "required": true,
-      "prompt": "How severe is it — low, medium, high, or critical?",
-      "enum": [
-        { "value": "low",      "label": "Low",      "aliases": ["minor", "small", "not serious"] },
-        { "value": "medium",   "label": "Medium",   "aliases": ["moderate", "moderate severity"] },
+      "question": "How severe is it — low, medium, high, or critical?",
+      "options": [
+        { "value": "low",      "label": "Low",      "aliases": ["minor", "slight", "not serious"] },
+        { "value": "medium",   "label": "Medium",   "aliases": ["moderate"] },
         { "value": "high",     "label": "High",     "aliases": ["major", "serious", "severe"] },
         { "value": "critical", "label": "Critical", "aliases": ["emergency", "urgent", "life threatening"] }
       ]
     },
-    { "id": "location",       "label": "Location",                "type": "string", "required": true,  "prompt": "Where did it happen?" },
-    { "id": "occurred_at",    "label": "Date & Time",             "type": "datetime","required": true, "prompt": "When did it happen?" },
-    { "id": "description",    "label": "Description",             "type": "text",   "required": true },
-    { "id": "immediate_actions","label": "Immediate Actions Taken","type": "text",  "required": true,  "prompt": "What has been done so far to handle it?" },
-    { "id": "persons_involved","label": "Persons Involved",       "type": "string_list", "required": false, "ask_once": true, "group": "people" },
-    { "id": "equipment_involved","label": "Equipment / Asset",    "type": "string_list", "required": false, "ask_once": true, "group": "followup" },
-    { "id": "witnesses",      "label": "Witness Information",     "type": "string_list", "required": false, "ask_once": true, "group": "people" },
-    { "id": "recommended_actions","label": "Recommended Follow-up","type": "text",   "required": false, "ask_once": true, "group": "followup" },
+    { "id": "location",          "label": "Location",               "type": "text",        "required": true,  "question": "Where did it happen?" },
+    { "id": "occurred_at",       "label": "Date & Time",            "type": "datetime",    "required": true,  "question": "When did it happen?" },
+    { "id": "description",       "label": "Description",            "type": "textarea",    "required": true },
+    { "id": "immediate_actions", "label": "Immediate Actions Taken","type": "textarea",    "required": true,  "question": "What has been done so far to handle it?" },
+    { "id": "persons_involved",  "label": "Persons Involved",       "type": "string_list", "required": false, "ask_once": true, "group": "people" },
+    { "id": "equipment_involved","label": "Equipment / Asset",      "type": "string_list", "required": false, "ask_once": true, "group": "followup" },
+    { "id": "witnesses",         "label": "Witness Information",    "type": "string_list", "required": false, "ask_once": true, "group": "people" },
+    { "id": "recommended_actions","label": "Recommended Follow-up", "type": "textarea",    "required": false, "ask_once": true, "group": "followup" },
     {
       "id": "action_status", "label": "Current Action Status", "type": "enum", "required": false,
       "group": "followup", "ask_once": true, "default": "open",
-      "enum": [
-        { "value": "open",        "label": "Open",         "aliases": [] },
-        { "value": "in_progress", "label": "In progress",  "aliases": ["being handled", "ongoing"] },
-        { "value": "monitoring",  "label": "Monitoring",   "aliases": ["watching"] },
-        { "value": "resolved",    "label": "Resolved",     "aliases": ["fixed", "closed", "done"] }
+      "options": [
+        { "value": "open",        "label": "Open",        "aliases": [] },
+        { "value": "in_progress", "label": "In progress", "aliases": ["being handled", "ongoing"] },
+        { "value": "monitoring",  "label": "Monitoring",  "aliases": ["watching"] },
+        { "value": "resolved",    "label": "Resolved",    "aliases": ["fixed", "closed", "done"] }
       ]
     }
   ],
   "question_groups": [
-    {
-      "id": "people",
-      "prompt": "Were any other people involved, or any witnesses you'd like to note?"
-    },
-    {
-      "id": "followup",
-      "prompt": "Was any equipment or asset involved, any follow-up actions you'd recommend, and is the situation still open, in progress, monitoring, or resolved?"
-    }
+    { "id": "people",   "prompt": "Were any other people involved, or any witnesses you'd like to note?" },
+    { "id": "followup", "prompt": "Was any equipment or asset involved, any follow-up actions you'd recommend, and is the situation still open, in progress, monitoring, or resolved?" }
   ],
   "behavior": {
     "ask_optional_once": true,
-    "optional_mode": "combined",        // combined: one natural question per group | individual
+    "optional_mode": "combined",
     "confirm_before_submit": true,
     "allow_unknown_required": true
   }
@@ -387,8 +390,8 @@ IDLE ──start──▶ LISTENING ──speech──▶ CAPTURING ──endpoi
      never hard-block submission);
    - if one utterance answers several missing fields, all are applied at once and only
      the remaining ones are asked.
-   (10 fields, 6 required, 4 filled by the first utterance → the assistant asks the
-   remaining 2 required fields one by one before moving on.)
+   (user's example: 10 fields, 6 required, 4 filled by the first utterance → the assistant
+   asks the remaining 2 required fields one by one before moving on.)
 2. If a required enum got an unmatchable answer → re-ask with option labels.
 3. Required complete → remaining optional `ask_once` fields are asked as **one natural,
    combined question per `question_group`** (schema-defined), never field-by-field —
@@ -483,7 +486,8 @@ AudioRecord 16 kHz mono PCM16 → ring buffer → VAD (Silero ONNX, 512-sample f
 
 ## 8. Output contract (the "plug into any API" JSON)
 
-Built by `ReportBuilder`, emitted by `ReportSink` (`FileSink`, `ShareSink`, `HttpSink`).
+Built by `ReportJson` (§9.2) and delivered by `ReportRepository` (local save, source of
+truth) + `ReportSubmitter` (proxy POST, §8.1).
 
 ```jsonc
 {
@@ -562,131 +566,150 @@ timeout / 5xx → outbox retry with backoff
 
 ## 9. Code design
 
-### 9.1 Repository layout
+### 9.1 Repository layout (current, upgrade in place)
 
 ```
-KevinDidThis/
+KevinDidThis/                                  single Android Studio project
 ├── docs/
-│   ├── DESIGN.md              ← this document
-│   ├── TOOL_PROTOCOL.md       (extracted from §4 for quick reference)
-│   └── QIDK_SETUP.md          (extracted from §10, step-by-step)
-├── core/                      pure Kotlin/JVM library — no Android deps, unit-tested on host
-│   ├── settings.gradle.kts
+│   └── DESIGN.md                              ← this document
+├── app/
 │   ├── build.gradle.kts
 │   └── src/
-│       ├── main/kotlin/com/qidk/incident/core/
-│       │   ├── form/          FormSchema, FieldDef, FormState, FieldNormalizer, FieldStatus
-│       │   ├── tools/         ToolDefs, ToolCall, ToolCallParser, ToolExecutor
-│       │   ├── prompt/        ExtractionPrompt (build), SchemaDigest, Grammar (optional GBNF)
-│       │   ├── engine/        ExtractionEngine, LlmBackend, LlmOutput
-│       │   ├── dialog/        DialogPolicy, FastIntents, SessionState, SessionEvent
-│       │   ├── session/       IncidentSession
-│       │   └── report/        ReportBuilder, ReportSink
-│       ├── main/resources/forms/incident_report.json
-│       └── test/kotlin/…      JUnit tests incl. the golden water-leak scenario
-├── android/                   Android Studio project (QIDK app)
-│   ├── settings.gradle.kts    includes :app and :core (../core)
-│   └── app/
-│       ├── build.gradle.kts
-│       └── src/main/
-│           ├── AndroidManifest.xml
-│           ├── assets/forms/incident_report.json      (same schema)
-│           ├── assets/prompts/…                       (few-shots, chat templates)
-│           ├── java/com/qidk/incident/
-│           │   ├── MainActivity.kt / ui/…             Compose UI
-│           │   ├── ui/IncidentWidget.kt               home-screen widget (1-tap record)
-│           │   ├── audio/AudioCapture.kt, EnergyVad.kt
-│           │   ├── net/ProxyApi.kt                    form fetch + report submit (§8.1)
-│           │   ├── backend/GenieLlm.kt   (JNI, port of AI-Assistant pattern)
-│           │   ├── backend/WhisperAsr.kt (JNI, port of ASR-LLM-TTS pattern)
-│           │   ├── backend/MeloTts.kt    (JNI/AAR, ASR-LLM-TTS pattern)
-│           │   ├── backend/AndroidTts.kt, TextAsr.kt, EchoLlm.kt  (fallbacks)
-│           │   └── sink/HttpSink.kt, FileSink.kt, ShareSink.kt
-│           └── cpp/ native glue for Genie/Whisper (from QIDK samples, BSD-3-Clause-Clear)
+│       ├── main/
+│       │   ├── AndroidManifest.xml            (RECORD_AUDIO + INTERNET for the proxy)
+│       │   ├── assets/forms/incident_report.json   ← dynamic form definition (§3.1)
+│       │   └── java/com/megathon/incidentassistant/
+│       │       ├── AppContainer.kt            manual DI + AppConfig (proxy URL, placeholder switch)
+│       │       ├── MainActivity.kt            Compose host, 3-step navigation
+│       │       ├── ai/                        SpeechToText / IncidentExtractor / SpeechSynthesizer
+│       │       │                              (placeholders now; Whisper / Genie / MeloTTS later)
+│       │       ├── form/                      FormSchema, FormState, FieldNormalizer,
+│       │       │                              ToolCallParser, ExtractionPromptBuilder  [dynamic form core]
+│       │       ├── net/                       ProxyApi: form fetch + report submit (§8.1)
+│       │       ├── data/                      ReportRepository (in-memory → Room + outbox later)
+│       │       ├── domain/                    report/tool models (being folded into form/)
+│       │       └── ui/                        Capture / Review / Done screens, ViewModel, Theme
+│       └── test/java/com/megathon/incidentassistant/   JVM unit tests
 ├── tools/
-│   ├── export_llm.sh          AI Hub export recipes (Qwen3-4B / Llama-3.2-3B, snapdragon-8-gen-3)
-│   ├── export_asr_tts.md      QPM Voice AI ASR/TTS package + notebook steps
-│   ├── push_models.sh         adb push bundle → /data/local/tmp + env setup
-│   ├── mock_proxy.py          local proxy: serves forms (§3.1) + accepts reports (§8.1)
-│   └── prompt_lab.py          host-side prompt tuning vs any OpenAI-compatible server
-└── README.md                  run/demo instructions once implemented
+│   ├── mock_proxy.py                          local proxy: serves forms + accepts reports (§8.1)
+│   ├── export_llm.sh                          AI Hub export recipes (Qwen3-4B / Llama-3.2-3B)
+│   ├── export_asr_tts.md                      QPM Voice AI ASR/TTS package + notebook steps
+│   └── push_models.sh                         adb push bundle → /data/local/tmp + env setup
+└── gradle/ + gradlew                          wrapper (Gradle 8.7)
 ```
+
+The earlier `core/` + `android/` split is retired — the pipeline lives inside the app as
+`form/` (pure Kotlin, JVM-testable) plus `ai/` seams, per the in-place decision (§14).
+Naming map from earlier drafts: session = `IncidentViewModel`; report build/emit =
+`ReportJson` + `ReportRepository`/`ReportSubmitter`.
 
 ### 9.2 Core interfaces (design code)
 
+Target API surface for the in-place upgrade. The placeholder shell already provides the
+Compose UI, state machine and seams; the `form/` + `net/` types below are what gets added
+next (all pure Kotlin/JVM-testable except `net/`).
+
 ```kotlin
-// form/FormSchema.kt
-enum class FieldType { STRING, TEXT, ENUM, DATETIME, STRING_LIST, NUMBER, BOOLEAN }
-data class EnumValue(val value: String, val label: String, val aliases: List<String> = emptyList())
-data class FieldDef(val id: String, val label: String, val type: FieldType,
-                    val required: Boolean = false, val askOnce: Boolean = false,
-                    val prompt: String? = null, val enumValues: List<EnumValue> = emptyList(),
-                    val default: String? = null)
-data class FormSchema(val id: String, val title: String, val version: String,
-                      val fields: List<FieldDef>, val behavior: Behavior = Behavior())
-class FormSchemaLoader { fun load(json: String): FormSchema ; fun loadFromAssets(...) }
+// form/FormSchema.kt — the dynamic form definition (§3.1); parsed from the bundled asset
+// or the proxy. No field is ever hardcoded in the app.
+@Serializable enum class FieldType { TEXT, TEXTAREA, ENUM, DATETIME, STRING_LIST, NUMBER, BOOLEAN }
 
-// form/FormState.kt
-enum class FieldStatus { EMPTY, FILLED, AMBIGUOUS, UNKNOWN, CONFIRMED }
-data class FieldValue(val value: String?, val confidence: Double, val evidence: String?,
-                      val utterance: Int, val status: FieldStatus)
-class FormState(schema: FormSchema) {
-    fun apply(u: FieldUpdate): ApplyResult          // normalize + merge (§3.3)
-    fun missingRequired(): List<FieldDef>
-    fun gatePasses(): Boolean
-    fun snapshotForPrompt(): String
-    fun toJson(): JsonObject
+@Serializable
+data class FieldOption(val value: String, val label: String = "", val aliases: List<String> = emptyList())
+
+@Serializable
+data class FormField(
+    val id: String, val label: String = "", val type: FieldType = FieldType.TEXT,
+    val required: Boolean = false, @SerialName("ask_once") val askOnce: Boolean = false,
+    val question: String? = null, @SerialName("default") val defaultValue: String? = null,
+    val options: List<FieldOption> = emptyList(),
+    val keywords: List<String> = emptyList(),          // ← LLM extraction vocabulary
+    val group: String? = null,
+) {
+    /** id + label + keywords + every option label/alias: the words the model watches for. */
+    fun vocabulary(): List<String>
 }
 
-// tools/ToolProtocol.kt
+@Serializable data class QuestionGroup(val id: String, val prompt: String, val fields: List<String> = emptyList())
+@Serializable data class FormBehavior(
+    @SerialName("ask_optional_once") val askOptionalOnce: Boolean = true,
+    @SerialName("optional_mode") val optionalMode: String = "combined",
+    @SerialName("confirm_before_submit") val confirmBeforeSubmit: Boolean = true,
+    @SerialName("allow_unknown_required") val allowUnknownRequired: Boolean = true,
+)
+@Serializable data class FormSchema(
+    val id: String, val title: String = "", val version: String = "1.0",
+    val fields: List<FormField> = emptyList(),
+    @SerialName("question_groups") val questionGroups: List<QuestionGroup> = emptyList(),
+    val behavior: FormBehavior = FormBehavior(),
+) {
+    fun field(id: String): FormField?
+    val requiredFields: List<FormField>
+}
+object FormSchemaParser { fun parse(text: String): FormSchema }   // kotlinx.serialization
+
+// form/FormState.kt — the running form + deterministic gate (§3.3/§3.4)
+enum class FieldStatus { EMPTY, FILLED, UNKNOWN, AMBIGUOUS }
 enum class UpdateStatus { ANSWERED, INFERRED, UNKNOWN }
-data class FieldUpdate(val field: String, val value: String, val confidence: Double,
+data class FieldValue(val value: String = "", val confidence: Double = 0.0,
+                      val evidence: String = "", val status: FieldStatus = FieldStatus.EMPTY,
+                      val utterance: Int = 0)
+class FormState(schema: FormSchema) {
+    fun beginUtterance()
+    fun get(fieldId: String): FieldValue
+    fun text(fieldId: String): String
+    fun entries(): Map<String, FieldValue>
+    fun apply(fieldId: String, rawValue: String, confidence: Double,
+              evidence: String?, status: UpdateStatus): ApplyResult   // normalize + merge (§3.3)
+    fun markUnknown(fieldId: String, evidence: String? = null): ApplyResult
+    fun setDirect(fieldId: String, value: String)                     // Review-screen edit
+    fun missingRequired(): List<FormField>
+    fun gatePasses(): Boolean
+}
+object FieldNormalizer {   // enums match value/label/aliases; garbage is rejected → re-asked
+    fun normalize(field: FormField, raw: String): Normalization       // Ok | Rejected(allowed)
+}
+
+// form/FormToolCall.kt + form/ToolCallParser.kt — the model proposes, the app executes (§4.2)
+sealed interface FormToolCall {
+    data class RecordFields(val updates: List<FieldUpdate>) : FormToolCall
+    data class AskUser(val fieldId: String?, val question: String) : FormToolCall
+    data class SubmitReport(val summary: String?) : FormToolCall
+}
+data class FieldUpdate(val fieldId: String, val value: String, val confidence: Double = 0.5,
                        val evidence: String? = null, val status: UpdateStatus = UpdateStatus.INFERRED)
-sealed interface ToolCall {
-    data class RecordFields(val updates: List<FieldUpdate>) : ToolCall
-    data class AskUser(val field: String?, val question: String) : ToolCall
-    data class SubmitReport(val summary: String?) : ToolCall
-}
 object ToolCallParser {
-    fun parse(rawModelText: String): ParseResult        // §4.2, 4 strategies + repair
-    fun parseOpenAiToolCalls(...): ParseResult
-}
-object ToolDefs { fun jsonSchemas(schema: FormSchema): List<JsonObject> }
-
-// engine/ExtractionEngine.kt  — pure, backend-agnostic
-interface LlmBackend { val id: String; suspend fun generate(prompt: String, maxTokens: Int): LlmOutput }
-class ExtractionEngine(schema: FormSchema, llm: LlmBackend, clock: Clock) {
-    suspend fun process(utterance: String, state: FormState,
-                        pending: FieldDef?, recent: List<Turn>): ExtractionResult
-}
-data class ExtractionResult(val prompt: String, val rawOutput: String,
-                            val calls: List<ToolCall>, val applied: List<ApplyResult>,
-                            val llmMs: Long)
-
-// dialog/DialogPolicy.kt
-sealed interface AssistantAction {
-    data class AskField(val field: FieldDef, val text: String) : AssistantAction
-    data class Clarify(val field: FieldDef, val text: String) : AssistantAction
-    data class Confirm(val text: String) : AssistantAction
-    data class Submit(val text: String) : AssistantAction
-    data class Info(val text: String) : AssistantAction
-}
-class DialogPolicy(schema: FormSchema) {
-    fun next(state: FormState, lastExtraction: ExtractionResult?): AssistantAction
-    fun questionFor(field: FieldDef): String
+    fun parse(rawModelText: String): Result   // OpenAI tool_calls | <tool_call> | fenced | bare JSON + repair
 }
 
-// session/IncidentSession.kt
-class IncidentSession(schema: FormSchema, llm: LlmBackend, policy: DialogPolicy) {
-    val events: Flow<SessionEvent>
-    suspend fun start(): AssistantAction
-    suspend fun onUtterance(text: String): List<SessionEvent>   // one full turn
-    suspend fun confirmSubmit(): ReportReadyEvent                // gate-checked
+// form/ExtractionPromptBuilder.kt — the prompt is generated from the form, so any model works
+object ExtractionPromptBuilder {
+    fun systemPrompt(schema: FormSchema, state: FormState, nowIso: String): String
+    fun userPrompt(pendingField: FormField?, utterance: String): String
 }
 
-// report/ReportBuilder.kt + ReportSink.kt
-class ReportBuilder(schema: FormSchema) { fun build(state: FormState, transcript: List<Turn>, metrics: Metrics): JsonObject }
-interface ReportSink { suspend fun emit(reportJson: String): SinkResult }
+// form/ReportJson.kt — the §8 output contract (pluggable into any API)
+object ReportJson { fun build(schema: FormSchema, state: FormState, reportId: String,
+                              nowIso: String, status: String = "submitted"): String }
+
+// ai/ — the three swappable seams (Echo/placeholder today, QIDK backends later)
+interface SpeechToText { val partialTranscript: StateFlow<String>; suspend fun prepare();
+                         suspend fun startListening(); suspend fun stopListening(): String; fun release() }
+interface LlmBackend { val id: String; suspend fun generate(prompt: String): String }  // model-agnostic
+interface SpeechSynthesizer { fun speak(text: String); fun stop(); fun shutdown() }
+
+// net/ProxyApi.kt — form definitions in, reports out (§8.1); bundled asset is the fallback
+interface FormSource { suspend fun fetchForm(formId: String): FormSchema }
+class BundledFormSource(context: Context) : FormSource
+class ProxyFormSource(baseUrl: String, fallback: FormSource) : FormSource
+interface ReportSubmitter { suspend fun submit(reportJson: String, reportId: String): SubmitResult }
+class HttpReportSubmitter(baseUrl: String) : ReportSubmitter
+
+// AppContainer.kt — the single place placeholders are swapped for real models
+class AppContainer(context: Context) {
+    val speechToText: SpeechToText; val llm: LlmBackend; val synthesizer: SpeechSynthesizer
+    val formSource: FormSource; val reportSubmitter: ReportSubmitter; val repository: ReportRepository
+}
 ```
 
 ### 9.3 Android app design
@@ -698,9 +721,9 @@ interface ReportSink { suspend fun emit(reportJson: String): SinkResult }
     (green ≥0.8, amber 0.5–0.8, red <0.5 / ambiguous), status chip (`answered`,
     `inferred`, `unknown`), tap → evidence/utterance.
   - Transcript strip: partial in grey, final in black; conversation bubbles below.
-  - Controls: big PTT mic button (hold to talk) + open-mic toggle; text input (debug);
-    `Submit` button enabled iff `gatePasses()`; overflow → `View JSON`, `New report`,
-    `Settings` (backend modes, HTTP sink URL).
+  - Controls: big single-shot record button (tap to start, stops on silence) — PTT and
+    open-mic stay optional; text input (debug); `Submit` button enabled iff
+    `gatePasses()`; overflow → `View JSON`, `New report`, `Settings`.
 - **Widget (home screen)**: `AppWidgetProvider` + `RemoteViews` — one big "Report"
   button and a status line. Tap → `PendingIntent` → `MainActivity` with
   `EXTRA_AUTO_LISTEN=true`; recording starts immediately (no extra tap). After
@@ -770,7 +793,7 @@ adb push $QAIRT/lib/aarch64-android/*      /data/local/tmp/genie_bundle/
   sets `ADSP_LIBRARY_PATH`/`LD_LIBRARY_PATH`, `GenieDialog_create`, then per-turn
   `GenieDialog_query` with streaming callback (port of QIDK `native-lib.cpp`).
 - Whisper/MeloTTS models under the app's external files dir (as in the QIDK samples),
-  e.g. `/storage/emulated/0/Android/data/com.qidk.incident/files/{asr,tts}/`.
+  e.g. `/storage/emulated/0/Android/data/com.megathon.incidentassistant/files/{asr,tts}/`.
 - First-run self-check screen shows which backends loaded; missing model → fallback +
   banner.
 
@@ -838,17 +861,13 @@ adb push $QAIRT/lib/aarch64-android/*      /data/local/tmp/genie_bundle/
 
 ---
 
-## 14. Open decisions (need sign-off)
+## 14. Open decisions
 
-1. **App UI toolkit**: Jetpack Compose (proposed) vs XML Views (matches QIDK samples).
-2. **Demo interaction**: push-to-talk default at demo, or open-mic with VAD? (proposed:
-   both, PTT default).
-3. **LLM choice**: Qwen3-4B-Instruct-2507 primary + Llama-3.2-3B fallback (proposed),
+1. **LLM choice**: Qwen3-4B-Instruct-2507 primary + Llama-3.2-3B fallback (proposed),
    or start with Llama-3.2-3B only (single model, matches QIDK sample exactly)?
-4. **Proxy**: contract is defined in §8.1 and a mock ships in `tools/mock_proxy.py`.
-   Do you have a real proxy URL/contract yet, or should the demo run against the mock
-   (host machine or a tiny service on the QIDK)?
-5. **App name/package**: `com.qidk.incident` / "Incident Assistant" — confirm or rename.
+2. **Real proxy**: contract is fixed (§8.1) and a mock ships (`tools/mock_proxy.py`);
+   drop in the production URL/contract when your team provides it (an auth header is a
+   one-line extension).
 
 ### Decided
 
@@ -858,6 +877,16 @@ adb push $QAIRT/lib/aarch64-android/*      /data/local/tmp/genie_bundle/
 - **Optional fields**: **approved** — asked as combined, natural, schema-defined
   questions per `question_groups` (§3.1, §5.2 item 3), not one field per turn; whole
   groups are skippable in one phrase and unanswered optionals are marked `skipped`.
+- **Upgrade strategy**: in-place in the existing `:app` module (no separate `core/`
+  module); the placeholder-code commit is the base.
+- **Package name**: keep `com.megathon.incidentassistant` (no rename).
+- **UI toolkit**: Jetpack Compose (already in the codebase).
+- **Interaction**: widget tap → record → single-shot pipeline → TTS "done"
+  (PTT / open-mic remain secondary modes).
+- **Forms**: fully dynamic JSON metadata (fields, `required`, `type`, `options`,
+  `keywords`, questions, groups), fetched/updatable via the proxy API; the LLM prompt
+  is generated from the form, so models and use-cases are swappable without app edits.
+  XML is not needed now (a parser swap later if it ever is).
 
 ---
 
