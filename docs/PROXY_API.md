@@ -3,8 +3,9 @@
 The app is a **pure client**. Against the server you point it at, it makes exactly two
 kinds of request:
 
-1. **Fetch the form definition** — `GET /api/v1/forms/{id}` on every app start /
-   refresh (fallback: the bundled asset of the same id, so the demo works offline).
+1. **Fetch the form definition** — `GET /api/v1/forms/{id}` on every app start and
+   when the user taps **Refresh form**. The app bundles no definitions — the server is
+   the only source.
 2. **Submit the finished report** — `POST /api/v1/reports` when the user confirms.
 
 Form **management** — creating, editing, versioning definitions — happens on your side
@@ -16,7 +17,7 @@ Everything else (ASR, LLM, TTS) stays on-device.
 
 | | |
 |---|---|
-| Base URL | configured in `AppConfig.PROXY_BASE_URL` (blank = bundled forms only, offline) |
+| Base URL | configured in `AppConfig.SERVER_BASE_URL` (blank = the app cannot load forms) |
 | Content type | `application/json` |
 | Auth | none in v1 — add `Authorization: Bearer <token>` if needed (one header in `net/ProxyApi.kt`) |
 | Local server | `python3 tools/mock_proxy.py` plays this role until the real one exists |
@@ -28,8 +29,9 @@ Everything else (ASR, LLM, TTS) stays on-device.
 ### `GET /api/v1/forms/{id}`
 
 The app calls this at startup and when the user taps **Refresh form**. On any failure
-(timeout, `404`, invalid JSON) it silently falls back to the last good cached definition,
-then to the bundled asset — the demo never breaks offline.
+(timeout, `404`, invalid JSON) it shows an error and waits for a retry — by design there
+is no local fallback (DESIGN.md §3.5), so the form on screen is always the one the server
+sent.
 
 ```bash
 curl http://127.0.0.1:8787/api/v1/forms/workplace_incident
@@ -130,11 +132,11 @@ lost.
 
 ```bash
 python3 tools/mock_proxy.py --port 8787
-# optional: --forms app/src/main/assets/forms --reports /tmp/incident_reports
+# optional: --forms tools/forms --reports /tmp/incident_reports
 ```
 
-- Serves the bundled definitions (`GET /api/v1/forms/*`) and stores submissions as JSON
-  files (`POST /api/v1/reports`).
+- Serves the fixture definitions from `tools/forms/` (the `--forms` directory; the app
+  bundles no definitions) and stores submissions as JSON files (`POST /api/v1/reports`).
 - **Simulating an admin update:** edit the JSON file in the `--forms` directory, then tap
   *Refresh form* in the app (or restart it).
 - Mock-only conveniences, not part of the client contract: `GET /api/v1/reports` and
@@ -142,7 +144,7 @@ python3 tools/mock_proxy.py --port 8787
 
 Connect the app:
 
-| Target | `AppConfig.PROXY_BASE_URL` |
+| Target | `AppConfig.SERVER_BASE_URL` |
 |---|---|
 | Android emulator | `http://10.0.2.2:8787` |
 | Device on the LAN | `http://<your-ip>:8787` |
@@ -152,5 +154,5 @@ Connect the app:
 
 | App code | Request |
 |---|---|
-| `net/ProxyFormSource.fetchForm(id)` | `GET /api/v1/forms/{id}` (fallback: cache → bundled asset) |
+| `net/HttpFormSource.fetchForm(id)` | `GET /api/v1/forms/{id}` (no fallback; errors surface) |
 | `net/HttpReportSubmitter.submit(json, id)` | `POST /api/v1/reports` |

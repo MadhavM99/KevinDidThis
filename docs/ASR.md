@@ -180,4 +180,4 @@ under `<manifest>` (as the guide's snippet suggests) fails the build with
   that has never had models pushed to it.
 - Untested on hardware — no device was connected during development. First run should check
   `adb logcat -s WhisperSTT`.
-- Next placeholder to remove: `PlaceholderIncidentExtractor` (the LLM stage).
+- Next placeholder to remove: `PlaceholderLlm` (the LLM extraction stage).

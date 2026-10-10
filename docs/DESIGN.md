@@ -128,15 +128,21 @@ Last updated: 2026-10-10.
 
 ## 3. Form model (user-defined)
 
-### 3.1 Form definition — dynamic JSON (bundled asset + proxy API)
+### 3.1 Form definition — dynamic JSON (server-delivered)
 
-The form is **data, not code**. Every field carries its full metadata — mandatory flag,
-answer type, options (with labels + aliases), the question to ask, grouping, and
-**keywords** — and the app generates the LLM extraction prompt from it at runtime. Any
-model (Qwen, Llama, …) and any use-case works with zero app changes; admins update the
-definition through the proxy API (§8.1). JSON is the wire format (an XML parser can be
-swapped in later if ever needed). Canonical copy:
-`app/src/main/assets/forms/incident_report.json`.
+The form is **data, not code**, and the app ships none of it. Every field carries its
+full metadata — mandatory flag, answer type, options (with labels + aliases), the
+question to ask, grouping, and **keywords** — and the app generates the LLM extraction
+prompt from it at runtime: field ids, labels, `keywords` and option labels/aliases become
+the model's extraction vocabulary. Nothing is hardcoded in the app: substitute the JSON
+and the extraction vocabulary changes with it. Any model (Qwen, Llama, …) and any
+use-case works with zero app changes; admins manage definitions on the server, the app
+only fetches them (§8.1, `docs/PROXY_API.md`). JSON is the wire format (an XML parser can
+be swapped in later if ever needed).
+
+The example below documents the format contract. At build time nothing form-specific is
+compiled into the app; during development the mock server (`tools/mock_proxy.py`) serves
+the fixtures in `tools/forms/`.
 
 ```jsonc
 {
@@ -234,17 +240,17 @@ swapped in later if ever needed). Canonical copy:
   the assistant keeps asking until every required field is filled (or explicitly marked
   "not specified" after an audible confirmation), so a report is always submittable.
 
-### 3.5 Form source & caching (server)
+### 3.5 Form source (server-only)
 
-- Primary source: `GET {server}/api/v1/forms/{form_id}` (contract: `docs/PROXY_API.md`)
-  at every app start and when the user taps **Refresh form**.
-- Fallback chain: last good cached schema (`filesDir/forms/<id>.json`) → bundled
-  `assets/forms/*.json`. The demo never depends on the network.
-- Admins update definitions on the server; the app only reads them. A refresh — or the
-  next app start — picks up changes.
-- A refresh loads the new definition and starts a fresh draft; a schema change never
-  affects a running session otherwise.
+- The app ships **no form definitions**. The only source is
+  `GET {server}/api/v1/forms/{form_id}` (contract: `docs/PROXY_API.md`), fetched at every
+  app start and when the user taps **Refresh form**.
+- **No local fallback**: if the fetch fails the app shows an error and waits for a retry —
+  the form on screen is always the one the server sent. Nothing hardcoded, ever.
+- Admins manage definitions on the server; the app only reads them. A refresh — or the
+  next app start — picks up changes and starts a fresh draft.
 - Any JSON with the §3.1 shape works — publishing a new form needs **zero app changes**.
+- Dev fixtures live in `tools/forms/` and are served by `tools/mock_proxy.py`.
 
 ---
 
@@ -560,11 +566,12 @@ timeout / 5xx → outbox retry with backoff
 
 **App-side rules**
 
-- Fetch at start; on failure use the cached schema; on first run without network use the
-  bundled default — the demo never depends on the network.
+- Fetch the form at start and on **Refresh form**; failures show an error the user can
+  retry. There are no bundled definitions — the server is the only source (§3.5).
 - Save locally **before** POSTing; the local copy is the source of truth, the POST is
   delivery. Failed deliveries stay in the outbox and are retried.
-- No auth in v1; a bearer-token header is a one-line extension if the real proxy needs it.
+- No auth in v1; a bearer-token header is a one-line extension if the real server needs
+  it.
 
 ---
 
@@ -581,9 +588,7 @@ KevinDidThis/                                  single Android Studio project
 │   ├── build.gradle.kts
 │   └── src/
 │       ├── main/
-│       │   ├── AndroidManifest.xml            (RECORD_AUDIO + INTERNET for the proxy)
-│       │   ├── assets/forms/incident_report.json    ← dynamic form definition (§3.1)
-│       │   ├── assets/forms/workplace_incident.json ← realistic demo form (18 fields)
+│       │   ├── AndroidManifest.xml            (RECORD_AUDIO + INTERNET for the server)
 │       │   └── java/com/megathon/incidentassistant/
 │       │       ├── AppContainer.kt            manual DI + AppConfig (proxy URL, placeholder switch)
 │       │       ├── MainActivity.kt            Compose host, 3-step navigation
@@ -598,6 +603,7 @@ KevinDidThis/                                  single Android Studio project
 │       └── test/java/com/megathon/incidentassistant/   JVM unit tests
 ├── tools/
 │   ├── mock_proxy.py                          stand-in server: serves forms + accepts reports
+│   ├── forms/                                 dynamic form fixtures served by the mock (§3.5)
 │   ├── export_llm.sh                          AI Hub export recipes (Qwen3-4B / Llama-3.2-3B)
 │   ├── export_asr_tts.md                      QPM Voice AI ASR/TTS package + notebook steps
 │   └── push_models.sh                         adb push bundle → /data/local/tmp + env setup
@@ -616,7 +622,7 @@ Compose UI, state machine and seams; the `form/` + `net/` types below are what g
 next (all pure Kotlin/JVM-testable except `net/`).
 
 ```kotlin
-// form/FormSchema.kt — the dynamic form definition (§3.1); parsed from the bundled asset
+// form/FormSchema.kt — the dynamic form definition (§3.1); parsed from what the server
 // or the proxy. No field is ever hardcoded in the app.
 @Serializable enum class FieldType { TEXT, TEXTAREA, ENUM, DATETIME, STRING_LIST, NUMBER, BOOLEAN }
 
@@ -704,10 +710,9 @@ interface SpeechToText { val partialTranscript: StateFlow<String>; suspend fun p
 interface LlmBackend { val id: String; suspend fun generate(prompt: String): String }  // model-agnostic
 interface SpeechSynthesizer { fun speak(text: String); fun stop(); fun shutdown() }
 
-// net/ProxyApi.kt — form definitions in, reports out (§8.1); bundled asset is the fallback
+// net/ProxyApi.kt — server-only form source + report submit (§8.1); no bundled fallback
 interface FormSource { suspend fun fetchForm(formId: String): FormSchema }
-class BundledFormSource(context: Context) : FormSource
-class ProxyFormSource(baseUrl: String, fallback: FormSource) : FormSource
+class HttpFormSource(baseUrl: String) : FormSource
 interface ReportSubmitter { suspend fun submit(reportJson: String, reportId: String): SubmitResult }
 class HttpReportSubmitter(baseUrl: String) : ReportSubmitter
 
@@ -893,6 +898,8 @@ adb push $QAIRT/lib/aarch64-android/*      /data/local/tmp/genie_bundle/
   `keywords`, questions, groups), fetched/updatable via the proxy API; the LLM prompt
   is generated from the form, so models and use-cases are swappable without app edits.
   XML is not needed now (a parser swap later if it ever is).
+- **Form sourcing**: server-only — the app bundles no form definitions and no hardcoded
+  keywords; fixtures live in `tools/forms/` and are served by the mock (§3.5).
 
 ---
 
