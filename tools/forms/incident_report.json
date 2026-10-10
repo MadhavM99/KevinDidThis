@@ -36,27 +36,27 @@
       ]
     },
     {
-      "id": "location",
+      "id": "location", "ask_phrase": "where it happened",
       "label": "Location",
       "type": "text",
       "required": true,
       "question": "Where did it happen?"
     },
     {
-      "id": "occurred_at",
+      "id": "occurred_at", "ask_phrase": "when it happened",
       "label": "Date & Time",
       "type": "datetime",
       "required": true,
       "question": "When did it happen?"
     },
     {
-      "id": "description",
+      "id": "description", "ask_phrase": "what happened",
       "label": "Description",
       "type": "textarea",
       "required": true
     },
     {
-      "id": "immediate_actions",
+      "id": "immediate_actions", "ask_phrase": "what has been done so far to handle it",
       "label": "Immediate Actions Taken",
       "type": "textarea",
       "required": true,

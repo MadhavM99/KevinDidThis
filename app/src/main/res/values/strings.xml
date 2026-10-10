@@ -68,13 +68,24 @@
     <string name="no_change_heard">I didn\'t hear a change.</string>
     <string name="did_not_understand">Sorry, I couldn\'t work that out.</string>
     <string name="did_not_hear">I didn\'t hear anything.</string>
+    <string name="redirect_to_incident">I\'m here to help you report an incident. Please describe what happened, where it happened, and any actions already taken.</string>
+    <string name="redirect_before_question">I\'m here to help you report an incident.</string>
+    <string name="not_sure_incident">Sorry, I\'m not sure that\'s about an incident.</string>
+    <string name="off_topic_paused">I\'ll wait. Tap the microphone when you\'re ready to continue the report.</string>
     <string name="confirm_cancel">Discard this report?</string>
     <string name="cancelled">Report discarded. Nothing was filed.</string>
     <string name="save_failed">I couldn\'t save the report on this device, so it was not filed. Please try again.</string>
     <string name="already_filed">Report %1$s is already filed.</string>
     <string name="session_closed">This report is closed. Start a new report to continue.</string>
+    <string name="ask_together">Could you tell me %1$s?</string>
+    <string name="and_two">%1$s and %2$s</string>
+    <string name="and_many">%1$s, and %2$s</string>
     <string name="or_two">%1$s or %2$s</string>
     <string name="or_many">%1$s, or %2$s</string>
+
+    <!-- Managed configuration (res/xml/app_restrictions.xml) -->
+    <string name="restriction_reporter_name_title">Reporter name</string>
+    <string name="restriction_reporter_name_description">Name of the person using this device. Filled in as the reporter so the assistant does not ask for it.</string>
 
     <!-- Review screen -->
     <string name="review_all_complete">All required fields are complete.</string>

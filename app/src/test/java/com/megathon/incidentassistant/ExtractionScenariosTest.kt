@@ -123,7 +123,7 @@ class ExtractionScenariosTest {
         val reply = f.session.onUtterance("A serious fire in Lab 3, Ann and Raj were there")
         assertEquals(4, reply.changedFieldIds.size)
         assertEquals("Ann; Raj", f.session.form.text("persons_involved"))
-        assertEquals("When did it happen?", reply.speech)
+        assertEquals("TELL ME: when it happened | what happened | what has been done so far to handle it?", reply.speech)
     }
 
     @Test

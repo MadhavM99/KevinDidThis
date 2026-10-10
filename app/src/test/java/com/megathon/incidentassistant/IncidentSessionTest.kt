@@ -44,12 +44,12 @@ class IncidentSessionTest {
     }
 
     @Test
-    fun severalMissingFieldsAreAskedOneAtATimeInSchemaOrder() = runBlocking {
+    fun missingFieldsAreAskedInSchemaOrderEnumsAlone() = runBlocking {
         val f = SessionFixture(ScriptedLlm.of(recordFields(U("incident_type", "fire", evidence = "a fire"))))
         assertEquals(severityQuestion, f.session.onUtterance("There is a fire").speech)
         // "High" is an exact option: no model call needed.
         val next = f.session.onUtterance("High")
-        assertEquals("Where did it happen?", next.speech)
+        assertEquals("TELL ME: where it happened | when it happened | what happened?", next.speech)
         assertEquals("high", f.session.form.text("severity"))
         assertEquals(1, (f.llm as ScriptedLlm).calls)
     }
@@ -223,11 +223,16 @@ class IncidentSessionTest {
             if (i == 0) recordFields(U("incident_type", "fire"), U("severity", "high")) else throw LlmException("npu fault")
         }
         val f = SessionFixture(llm)
-        assertEquals("Where did it happen?", f.session.onUtterance("Big fire, very serious").speech)
+        f.session.onUtterance("Big fire, very serious") // → combined where / when / what
+        // A combined answer cannot be assigned without the model: nothing is guessed, and
+        // each field is re-asked on its own...
+        val focused = f.session.onUtterance("In the basement car park, at noon")
+        assertEquals("AGAIN: Where did it happen?", focused.speech)
+        assertEquals(FieldStatus.EMPTY, f.session.form.get("location").status)
+        // ...where the answer to the one question asked is kept even with the model down.
         val reply = f.session.onUtterance("In the basement car park")
-
         assertEquals("In the basement car park", f.session.form.text("location"))
-        assertEquals("When did it happen?", reply.speech)
+        assertEquals("AGAIN: When did it happen?", reply.speech)
         assertEquals("model error: LlmException", reply.metrics?.llmFailure)
     }
 
@@ -258,7 +263,7 @@ class IncidentSessionTest {
                "options":[{"value":"low"},{"value":"high"}]}],"behavior":{"allow_unknown_required":false}}"""
         )
         val f = SessionFixture(ScriptedLlm { _, _ -> recordFields() }, schema = schema)
-        f.session.onUtterance("hello")
+        f.session.onUtterance("There was a problem in the plant")
         f.session.onUtterance("hmm")
         val third = f.session.onUtterance("hmm")
         assertTrue(third.speech.endsWith("(or say cancel)"))

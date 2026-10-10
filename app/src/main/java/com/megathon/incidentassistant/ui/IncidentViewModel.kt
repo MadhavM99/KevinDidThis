@@ -16,7 +16,9 @@ import com.megathon.incidentassistant.form.FieldType
 import com.megathon.incidentassistant.form.FieldValue
 import com.megathon.incidentassistant.form.FormField
 import com.megathon.incidentassistant.form.FormSchema
+import com.megathon.incidentassistant.data.ManagedConfigIdentityProvider
 import com.megathon.incidentassistant.session.ExtractionEngine
+import com.megathon.incidentassistant.session.IdentityProvider
 import com.megathon.incidentassistant.session.IncidentSession
 import com.megathon.incidentassistant.session.ReplyKind
 import com.megathon.incidentassistant.session.SessionPhase
@@ -99,6 +101,8 @@ class IncidentViewModel(
     private var schema: FormSchema = FormSchema(id = "")
     private val phrases = ResourcePhrases(appContext)
     private val extraction = ExtractionEngine(container.llm, now = { ZonedDateTime.now().toString() })
+    /** Signed-in reporter from device management; read per draft so a change applies to the next report. */
+    private val identity: IdentityProvider = ManagedConfigIdentityProvider(appContext)
     private var session: IncidentSession = newSession(schema)
 
     /** Watches the ASR backend's end-of-speech signal (VAD closed the utterance). */
@@ -297,7 +301,9 @@ class IncidentViewModel(
                 processing = false,
                 status = reply.speech,
                 followUpFieldId = reply.pendingFieldIds.firstOrNull(),
-                followUpQuestion = reply.speech.takeIf { open },
+                // INFO = nothing to answer (e.g. repeated off-topic): no follow-up prompt, so
+                // the hands-free loop waits for a tap instead of re-opening the mic.
+                followUpQuestion = reply.speech.takeIf { open && reply.kind != ReplyKind.INFO },
                 followUpIsConfirmation = reply.kind == ReplyKind.CONFIRM,
                 step = if (reply.phase == SessionPhase.SUBMITTED) Step.SUBMITTED else it.step,
                 submittedId = reply.reportId ?: it.submittedId,
@@ -421,6 +427,7 @@ class IncidentViewModel(
         repository = container.repository,
         submitter = container.reportSubmitter,
         now = { ZonedDateTime.now().toString() },
+        reporter = identity.currentUser(),
     )
 
     private fun describe(status: LlmStatus): String = when (status) {

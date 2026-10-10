@@ -8,6 +8,7 @@ import com.megathon.incidentassistant.form.FieldType
 import com.megathon.incidentassistant.form.FormField
 import com.megathon.incidentassistant.form.FormSchema
 import com.megathon.incidentassistant.form.FormState
+import com.megathon.incidentassistant.form.FormToolCall
 import com.megathon.incidentassistant.form.PendingQuestion
 import com.megathon.incidentassistant.form.ReportJson
 import com.megathon.incidentassistant.form.UpdateStatus
@@ -87,8 +88,18 @@ class IncidentSession(
     private val submitter: ReportSubmitter,
     private val now: () -> String,
     private val newReportId: () -> String = ReportIds::newReportId,
+    /** The signed-in user from a trusted source; null = unknown, nothing is assumed. */
+    reporter: UserIdentity? = null,
 ) {
-    val form = FormState(schema)
+    val form = FormState(schema).also { form ->
+        // App-provided context, validated against the schema like any value: the reporter is
+        // never asked when the app already knows them (and never guessed when it does not).
+        if (reporter != null) {
+            schema.fields.filter { it.prefill == PREFILL_REPORTER }.forEach { field ->
+                form.prefill(field.id, reporter.displayName, evidence = "signed-in user (${reporter.source})")
+            }
+        }
+    }
 
     var phase: SessionPhase = SessionPhase.COLLECTING
         private set
@@ -108,6 +119,9 @@ class IncidentSession(
     private var lastAsk: SessionReply? = null
     private var reportId: String? = null
 
+    /** Off-topic replies in a row; bounds the hands-free redirection loop. */
+    private var offTopicStreak = 0
+
     private var firstTurnStartNanos: Long? = null
     private var reviewReadyMs: Long? = null
     private val totals = mutableMapOf<String, Long>()
@@ -117,6 +131,7 @@ class IncidentSession(
         val turn = Turn(System.nanoTime())
         if (firstTurnStartNanos == null) firstTurnStartNanos = turn.startNanos
         val reply = handle(transcript.trim(), turn)
+        if (!turn.offTopic) offTopicStreak = 0
         reply.copy(metrics = turn.finish())
     }
 
@@ -180,6 +195,7 @@ class IncidentSession(
                 else -> phase = resume
             }
         }
+        if (intent == FastIntent.SMALL_TALK) return offTopic(Relevance.UNRELATED, turn)
 
         return when (phase) {
             SessionPhase.CONFIRM_UNKNOWN -> onConfirmUnknown(text, intent, context, turn)
@@ -196,9 +212,14 @@ class IncidentSession(
         context: List<ConversationTurn>,
         turn: Turn,
     ): SessionReply {
-        val asked = pending?.fields?.singleOrNull()
-        if (asked != null && (intent == FastIntent.UNKNOWN || intent == FastIntent.SKIP)) {
-            return cannotAnswer(asked, turn)
+        val askedFields = pending?.fields.orEmpty()
+        val asked = askedFields.singleOrNull()
+        if (askedFields.isNotEmpty() && (intent == FastIntent.UNKNOWN || intent == FastIntent.SKIP)) {
+            if (asked != null) return cannotAnswer(asked, turn)
+            // "I don't know" to a combined question: unclear which part, so ask each on its
+            // own — the user can then say they don't know that specific one.
+            memory.askAlone += askedFields.map { it.id }
+            return advance(turn)
         }
         if (asked != null && asked.type == FieldType.ENUM) {
             exactOption(asked, text)?.let { option ->
@@ -216,17 +237,22 @@ class IncidentSession(
 
         turn.fastPath = false
         val outcome = extractAndApply(text, context, turn)
-        if (asked != null && asked.id in outcome.unknownRequested && !form.isSatisfied(asked.id)) {
-            return cannotAnswer(asked, turn, changed = outcome.changed)
+        outcome.relevance?.let { return offTopic(it, turn) }
+        askedFields.firstOrNull { it.id in outcome.unknownRequested && !form.isSatisfied(it.id) }?.let {
+            return cannotAnswer(it, turn, changed = outcome.changed)
         }
-        if (asked != null && form.isSatisfied(asked.id)) {
-            memory.attempts.remove(asked.id)
-        } else if (asked != null && outcome.changed.isEmpty()) {
-            // Nothing usable at all. (A correction to another field is not a failed answer.)
-            memory.attempts[asked.id] = (memory.attempts[asked.id] ?: 0) + 1
+        for (field in askedFields) {
+            if (form.isSatisfied(field.id)) {
+                memory.attempts.remove(field.id)
+            } else if (outcome.changed.isEmpty()) {
+                // Nothing usable at all. (Answering part of a combined question, or a
+                // correction to another field, is not a failed answer: the rest is simply
+                // asked again.)
+                memory.attempts[field.id] = (memory.attempts[field.id] ?: 0) + 1
+            }
         }
         // With a pending question the rephrased re-ask already says "sorry, I didn't catch…".
-        val prefix = if (outcome.failed && outcome.changed.isEmpty() && asked == null) phrases.didNotUnderstand() else null
+        val prefix = if (outcome.failed && outcome.changed.isEmpty() && askedFields.isEmpty()) phrases.didNotUnderstand() else null
         return advance(turn, changed = outcome.changed, prefix = prefix)
     }
 
@@ -251,6 +277,7 @@ class IncidentSession(
                 // Probably an answer after all ("oh wait, it was medium").
                 turn.fastPath = false
                 val outcome = extractAndApply(text, context, turn)
+                outcome.relevance?.let { return offTopic(it, turn) }
                 advance(turn, changed = outcome.changed)
             }
         }
@@ -276,6 +303,7 @@ class IncidentSession(
             else -> {
                 turn.fastPath = false
                 val outcome = extractAndApply(text, context, turn)
+                outcome.relevance?.let { return offTopic(it, turn) }
                 advance(turn, changed = outcome.changed)
             }
         }
@@ -296,6 +324,8 @@ class IncidentSession(
         }
         turn.fastPath = false
         val outcome = extractAndApply(text, context, turn)
+        // Off-topic does not count as the one answer to this group: nothing is skipped.
+        outcome.relevance?.let { return offTopic(it, turn) }
         // Asked once: whatever the answer did not cover is skipped and never re-asked.
         val skipped = closeOptional(asked)
         return advance(turn, changed = (outcome.changed + skipped).distinct())
@@ -314,6 +344,7 @@ class IncidentSession(
             // A correction or extra detail: extract it, then read the updated summary back.
             turn.fastPath = false
             val outcome = extractAndApply(text, context, turn)
+            outcome.relevance?.let { return offTopic(it, turn) }
             val prefix = when {
                 outcome.changed.isNotEmpty() -> null
                 outcome.failed -> phrases.didNotUnderstand()
@@ -325,7 +356,15 @@ class IncidentSession(
 
     // ---------- extraction ----------
 
-    private class Outcome(val changed: List<String>, val unknownRequested: List<String>, val failed: Boolean)
+    /** Whether the utterance was about the incident; set only when it was not (or unclear). */
+    private enum class Relevance { UNRELATED, UNCLEAR }
+
+    private class Outcome(
+        val changed: List<String>,
+        val unknownRequested: List<String>,
+        val failed: Boolean,
+        val relevance: Relevance? = null,
+    )
 
     private suspend fun extractAndApply(text: String, context: List<ConversationTurn>, turn: Turn): Outcome {
         val asked = pending
@@ -334,17 +373,27 @@ class IncidentSession(
 
         val pendingIds = asked?.fields.orEmpty().map { it.id }.toSet()
         if (result.failure != null) {
-            // No usable model output. Never lose the answer to a free-text question: it IS
-            // the answer to what was just asked. Anything else is kept in the transcript
-            // only, and the user is asked again.
+            // Model unavailable (error / timeout): never lose the answer to a free-text
+            // question — it IS the answer to what was just asked. Not when the model did
+            // answer but unreadably: then nothing vouches that the words are on topic, so
+            // they stay in the transcript only and the user is asked again.
             val field = asked?.fields?.singleOrNull()
-            if (field != null && field.type in FREE_TEXT_TYPES && !form.isSatisfied(field.id)) {
+            val modelUnavailable = result.failure != ExtractionEngine.NO_TOOL_CALL
+            if (modelUnavailable && field != null && field.type in FREE_TEXT_TYPES && !form.isSatisfied(field.id)) {
                 val applied = turn.timed("apply") {
                     form.apply(field.id, text, FALLBACK_CONFIDENCE, text, UpdateStatus.ANSWERED)
                 }
                 if (applied.accepted) return Outcome(listOf(field.id), emptyList(), failed = true)
             }
             return Outcome(emptyList(), emptyList(), failed = true)
+        }
+        // Relevance gate BEFORE any tool runs. The model said off_topic → nothing is applied.
+        // If it ALSO proposed updates, its output contradicts itself: apply nothing and ask.
+        val offTopic = result.calls.filterIsInstance<FormToolCall.OffTopic>()
+        if (offTopic.isNotEmpty()) {
+            val proposedUpdates = result.calls.any { it is FormToolCall.RecordFields && it.updates.isNotEmpty() }
+            val unclear = proposedUpdates || offTopic.any { it.unsure }
+            return Outcome(emptyList(), emptyList(), failed = false, relevance = if (unclear) Relevance.UNCLEAR else Relevance.UNRELATED)
         }
         val execution = turn.timed("apply") { executor.execute(result.calls, form, pendingIds) }
         return Outcome(execution.changed, execution.unknownRequested, failed = false)
@@ -356,6 +405,12 @@ class IncidentSession(
         val action = turn.timed("policy") { policy.next(form, memory) }
         val reply = when (action) {
             is PolicyAction.AskField -> askField(action.field, action.attempt)
+            is PolicyAction.AskTogether -> {
+                val question = phrases.askTogether(action.fields.map(FieldText::askPhrase))
+                phase = SessionPhase.COLLECTING
+                pending = PendingQuestion(question, action.fields)
+                say(question, ReplyKind.ASK)
+            }
             is PolicyAction.ConfirmValue -> {
                 phase = SessionPhase.CONFIRM_VALUE
                 pending = PendingQuestion(FieldText.label(action.field), listOf(action.field))
@@ -440,6 +495,28 @@ class IncidentSession(
         }
     }.joinToString(" ")
 
+    /**
+     * Redirect without touching the draft: no field, status, attempt counter, optional-group
+     * bookkeeping or phase changes. The pending question (if any) is asked again so the
+     * conversation resumes exactly where it was. After [MAX_OFF_TOPIC_STREAK] in a row the
+     * reply is INFO — the UI stops the hands-free loop instead of listening again.
+     */
+    private fun offTopic(relevance: Relevance, turn: Turn): SessionReply {
+        turn.offTopic = true
+        offTopicStreak += 1
+        if (offTopicStreak > MAX_OFF_TOPIC_STREAK) {
+            return say(phrases.offTopicPaused(), ReplyKind.INFO)
+        }
+        val lead = if (relevance == Relevance.UNCLEAR) phrases.notSureItsAnIncident() else null
+        val question = lastAsk?.speech
+        val speech = if (question != null) {
+            listOfNotNull(lead ?: phrases.redirectBeforeQuestion(), question).joinToString(" ")
+        } else {
+            listOfNotNull(lead, phrases.redirectToIncident()).joinToString(" ")
+        }
+        return say(speech, lastAsk?.kind ?: ReplyKind.ASK)
+    }
+
     private fun reAsk(prefix: String): SessionReply {
         val last = lastAsk ?: return say(prefix, ReplyKind.ASK)
         return last.copy(speech = "$prefix ${last.speech}", changedFieldIds = emptyList())
@@ -511,6 +588,7 @@ class IncidentSession(
     /** Per-turn stage timer; folds into the session totals when the turn ends. */
     private inner class Turn(val startNanos: Long) {
         var fastPath = false
+        var offTopic = false
         private var promptMs = 0L
         private var llmMs = 0L
         private var parseMs = 0L
@@ -556,5 +634,7 @@ class IncidentSession(
         const val HISTORY_IN_PROMPT = 4
         const val UNKNOWN_EVIDENCE = "user could not say"
         const val SKIPPED_EVIDENCE = "skipped"
+        /** Redirect this many times in a row, then pause the hands-free loop. */
+        const val MAX_OFF_TOPIC_STREAK = 2
     }
 }

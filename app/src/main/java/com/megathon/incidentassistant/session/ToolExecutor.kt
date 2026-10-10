@@ -50,6 +50,8 @@ class ToolExecutor(private val schema: FormSchema) {
                 }
                 is FormToolCall.AskUser -> ignored += "ask_user"
                 is FormToolCall.SubmitReport -> ignored += "submit_report"
+                // Relevance is decided by IncidentSession before execution; nothing to apply.
+                is FormToolCall.OffTopic -> ignored += "off_topic"
             }
         }
         return Execution(changed.toList(), rejected, unknownRequested.toList(), ignored)

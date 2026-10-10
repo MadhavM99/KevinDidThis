@@ -52,7 +52,7 @@ class ExtractionPromptBuilderTest {
         val state = FormState(schema)
         state.apply("location", "Room 2", 0.9, "near room 2", UpdateStatus.INFERRED)
         val prompt = ExtractionPromptBuilder.systemPrompt(schema, state, "2026-10-10T10:00:00")
-        assertTrue(prompt.contains("low (Low, minor)"))
+        assertTrue(prompt.contains("low (minor)")) // a label that only repeats the id is left out
         assertTrue(prompt.contains("asked as \"How severe?\""))
         assertTrue(prompt.contains("location: Room 2 (from \"near room 2\")"))
     }

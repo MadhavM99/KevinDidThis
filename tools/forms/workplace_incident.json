@@ -4,7 +4,7 @@
   "version": "1.0",
   "fields": [
     {
-      "id": "reporter_name",
+      "id": "reporter_name", "prefill": "reporter", "ask_phrase": "who is filing the report",
       "label": "Reported By",
       "type": "text",
       "required": true,
@@ -30,7 +30,7 @@
       ]
     },
     {
-      "id": "incident_date_time",
+      "id": "incident_date_time", "ask_phrase": "when it happened",
       "label": "Date & Time of Incident",
       "type": "datetime",
       "required": true,
@@ -38,7 +38,7 @@
       "keywords": ["when did", "happened at", "this morning", "yesterday", "last night"]
     },
     {
-      "id": "location",
+      "id": "location", "ask_phrase": "where exactly it happened",
       "label": "Exact Location",
       "type": "text",
       "required": true,
@@ -84,7 +84,7 @@
       ]
     },
     {
-      "id": "description",
+      "id": "description", "ask_phrase": "what happened",
       "label": "What Happened",
       "type": "textarea",
       "required": true,
@@ -92,7 +92,7 @@
       "keywords": ["describe", "what happened"]
     },
     {
-      "id": "immediate_actions",
+      "id": "immediate_actions", "ask_phrase": "what was done immediately",
       "label": "Immediate Actions Taken",
       "type": "textarea",
       "required": true,

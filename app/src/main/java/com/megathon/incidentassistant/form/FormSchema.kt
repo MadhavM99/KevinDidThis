@@ -49,6 +49,19 @@ data class FormField(
     val keywords: List<String> = emptyList(),
     /** Optional `question_groups` membership, used to bundle conversational follow-ups. */
     val group: String? = null,
+    /**
+     * Filled by the app from a trusted context instead of being asked. Only `"reporter"`
+     * is defined: the signed-in user's name (see session/UserIdentity). Unknown → asked.
+     */
+    val prefill: String? = null,
+    /**
+     * Short clause used when this field is asked together with others, e.g. "where it
+     * happened" → "Could you tell me where it happened and when it happened?". Without it
+     * the label is used ("the location").
+     */
+    @SerialName("ask_phrase") val askPhrase: String? = null,
+    /** Never combine this field with others (safety-critical or needs a focused answer). */
+    @SerialName("ask_alone") val askAlone: Boolean = false,
 ) {
     /**
      * Every surface form that can indicate this field in speech: the id, the label,

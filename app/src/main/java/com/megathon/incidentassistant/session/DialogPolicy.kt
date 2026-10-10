@@ -1,6 +1,7 @@
 package com.megathon.incidentassistant.session
 
 import com.megathon.incidentassistant.form.FieldStatus
+import com.megathon.incidentassistant.form.FieldType
 import com.megathon.incidentassistant.form.FormField
 import com.megathon.incidentassistant.form.FormSchema
 import com.megathon.incidentassistant.form.FormState
@@ -9,6 +10,12 @@ import com.megathon.incidentassistant.form.FormState
 sealed interface PolicyAction {
     /** A required field is empty. [attempt] > 0 means the previous question went unanswered. */
     data class AskField(val field: FormField, val attempt: Int) : PolicyAction
+
+    /**
+     * Several missing required fields that take the same kind of open answer, asked in one
+     * natural question ("where and when it happened, and what has been done so far").
+     */
+    data class AskTogether(val fields: List<FormField>) : PolicyAction
 
     /** A required field holds an unsure (AMBIGUOUS) value — read it back for a yes/no. */
     data class ConfirmValue(val field: FormField, val value: String) : PolicyAction
@@ -33,6 +40,9 @@ class PolicyMemory {
 
     /** Optional fields already asked once (answered or not): never asked again. */
     val closedOptional = mutableSetOf<String>()
+
+    /** Required fields to ask on their own from now on (e.g. "I don't know" to a combined question). */
+    val askAlone = mutableSetOf<String>()
 }
 
 /**
@@ -52,7 +62,13 @@ class DialogPolicy(private val schema: FormSchema) {
                 FieldStatus.EMPTY -> {
                     val attempt = memory.attempts[field.id] ?: 0
                     val offerUnknown = attempt >= MAX_ATTEMPTS && schema.behavior.allowUnknownRequired
-                    return if (offerUnknown) PolicyAction.OfferUnknown(field) else PolicyAction.AskField(field, attempt)
+                    if (offerUnknown) return PolicyAction.OfferUnknown(field)
+                    if (!combinable(field, memory)) return PolicyAction.AskField(field, attempt)
+                    val together = schema.requiredFields
+                        .filter { state.get(it.id).status == FieldStatus.EMPTY && combinable(it, memory) }
+                        .dropWhile { it.id != field.id }
+                        .take(MAX_COMBINED)
+                    return if (together.size > 1) PolicyAction.AskTogether(together) else PolicyAction.AskField(field, attempt)
                 }
             }
         }
@@ -64,6 +80,15 @@ class DialogPolicy(private val schema: FormSchema) {
         //    schema sets confirm_before_submit=false, the assistant never files on its own.
         return PolicyAction.Confirm
     }
+
+    /**
+     * Open-answer fields that have not gone unanswered yet. Closed answers (options, yes/no,
+     * numbers) and `ask_alone` fields are always asked on their own, as is any field the
+     * user did not answer the first time (it gets a focused re-ask).
+     */
+    private fun combinable(field: FormField, memory: PolicyMemory): Boolean =
+        field.type in COMBINABLE_TYPES && !field.askAlone && field.id !in memory.askAlone &&
+            (memory.attempts[field.id] ?: 0) == 0
 
     private fun nextOptional(state: FormState, memory: PolicyMemory): PolicyAction.AskOptional? {
         if (!schema.behavior.askOptionalOnce) return null
@@ -91,5 +116,9 @@ class DialogPolicy(private val schema: FormSchema) {
         /** Ask, then one rephrase, then offer "not specified" (§5.2, approved behavior). */
         const val MAX_ATTEMPTS = 2
         const val OPTIONAL_MODE_INDIVIDUAL = "individual"
+
+        /** At most this many fields per combined question: natural, not exhaustive. */
+        const val MAX_COMBINED = 3
+        private val COMBINABLE_TYPES = setOf(FieldType.TEXT, FieldType.TEXTAREA, FieldType.DATETIME, FieldType.STRING_LIST)
     }
 }

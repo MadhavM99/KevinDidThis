@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Managed configuration set by the organisation's device management (MDM / EMM).
+     reporter_name fills the form field marked "prefill": "reporter" so the assistant does
+     not ask who is reporting. Not set → the question is asked as usual. -->
+<restrictions xmlns:android="http://schemas.android.com/apk/res/android">
+    <restriction
+        android:key="reporter_name"
+        android:title="@string/restriction_reporter_name_title"
+        android:description="@string/restriction_reporter_name_description"
+        android:restrictionType="string"
+        android:defaultValue="" />
+</restrictions>

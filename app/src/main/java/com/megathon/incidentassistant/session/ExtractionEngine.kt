@@ -90,7 +90,7 @@ class ExtractionEngine(
                 return Extraction(parsed.calls, warnings, null, llmCalls, ExtractionTimings(promptMs, llmMs, parseMs))
             }
             if (llmCalls > maxRepairs) {
-                return failed("no tool call in model output", warnings, llmCalls, promptMs, llmMs, parseMs)
+                return failed(NO_TOOL_CALL, warnings, llmCalls, promptMs, llmMs, parseMs)
             }
             request = prompt + REPAIR_SUFFIX
         }
@@ -110,6 +110,9 @@ class ExtractionEngine(
     companion object {
         /** Generous: covers a first call that still waits for the model to finish loading. */
         const val DEFAULT_TIMEOUT_MS = 30_000L
+
+        /** [Extraction.failure] when the model answered but no tool call could be read. */
+        const val NO_TOOL_CALL = "no tool call in model output"
 
         private const val REPAIR_SUFFIX =
             "\n\nYour previous reply could not be read. Reply again with ONLY the " +

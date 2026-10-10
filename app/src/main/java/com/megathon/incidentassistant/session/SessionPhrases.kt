@@ -21,6 +21,9 @@ interface SessionPhrases {
     fun offerUnknown(label: String): String
     fun confirmValue(label: String, value: String): String
 
+    /** One question for several fields: "Could you tell me where it happened and when?" */
+    fun askTogether(phrases: List<String>): String
+
     /** Catch-all optional question listing the open optional fields. */
     fun askOptional(labels: List<String>): String
 
@@ -33,6 +36,15 @@ interface SessionPhrases {
 
     fun didNotUnderstand(): String
     fun didNotHear(): String
+
+    /** Off-topic utterance with nothing asked yet: the full "what to tell me" redirection. */
+    fun redirectToIncident(): String
+    /** Off-topic utterance while a question is pending: short lead-in, the question follows. */
+    fun redirectBeforeQuestion(): String
+    /** The model could not tell whether this is about an incident. */
+    fun notSureItsAnIncident(): String
+    /** Several off-topic turns in a row: stop the hands-free loop and wait for the user. */
+    fun offTopicPaused(): String
 
     fun confirmCancel(): String
     fun cancelled(): String
@@ -51,6 +63,10 @@ interface SessionPhrases {
 /** Labels and display values derived from the schema, shared by session and summary. */
 internal object FieldText {
     fun label(field: FormField): String = field.label.ifBlank { field.id.replace('_', ' ') }
+
+    /** Clause for a combined question: the schema's `ask_phrase`, else "the <label>". */
+    fun askPhrase(field: FormField): String =
+        field.askPhrase?.trim()?.takeIf { it.isNotEmpty() } ?: "the ${label(field).lowercase()}"
 
     fun optionLabels(field: FormField): List<String> =
         field.options.map { it.label.ifBlank { it.value } }

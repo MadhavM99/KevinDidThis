@@ -21,6 +21,15 @@ class ResourcePhrases(private val context: Context) : SessionPhrases {
 
     override fun askOptional(labels: List<String>) = str(R.string.ask_optional, orList(labels))
 
+    override fun askTogether(phrases: List<String>) = str(R.string.ask_together, andList(phrases))
+
+    private fun andList(items: List<String>): String = when (items.size) {
+        0 -> ""
+        1 -> items.single()
+        2 -> str(R.string.and_two, items[0], items[1])
+        else -> str(R.string.and_many, items.dropLast(1).joinToString(", "), items.last())
+    }
+
     override fun summaryLine(label: String, value: String) = str(R.string.field_spoken, label, value)
 
     override fun notSpecified() = str(R.string.not_specified)
@@ -34,6 +43,14 @@ class ResourcePhrases(private val context: Context) : SessionPhrases {
     override fun didNotUnderstand() = str(R.string.did_not_understand)
 
     override fun didNotHear() = str(R.string.did_not_hear)
+
+    override fun redirectToIncident() = str(R.string.redirect_to_incident)
+
+    override fun redirectBeforeQuestion() = str(R.string.redirect_before_question)
+
+    override fun notSureItsAnIncident() = str(R.string.not_sure_incident)
+
+    override fun offTopicPaused() = str(R.string.off_topic_paused)
 
     override fun confirmCancel() = str(R.string.confirm_cancel)
 

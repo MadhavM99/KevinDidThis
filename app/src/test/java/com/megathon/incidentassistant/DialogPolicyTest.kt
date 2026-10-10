@@ -100,7 +100,9 @@ class DialogPolicyTest {
     @Test
     fun aDifferentFormNeedsNoCodeChanges() {
         val schema = FormSchemaParser.parse(formFixture("workplace_incident.json").readText())
-        val action = DialogPolicy(schema).next(FormState(schema), PolicyMemory()) as PolicyAction.AskField
-        assertEquals(schema.requiredFields.first().id, action.field.id)
+        val action = DialogPolicy(schema).next(FormState(schema), PolicyMemory()) as PolicyAction.AskTogether
+        assertEquals(schema.requiredFields.first().id, action.fields.first().id)
+        // The enum in between (department) is not folded into the open-answer question.
+        assertEquals(listOf("reporter_name", "incident_date_time", "location"), action.fields.map { it.id })
     }
 }

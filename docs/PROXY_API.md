@@ -40,7 +40,15 @@ curl http://127.0.0.1:8787/api/v1/forms/workplace_incident
 
 Response: the form definition (DESIGN.md §3.1) — fields with `id`, `label`, `type`,
 `required`, `question`, `options` + aliases, `keywords`, `group`, plus `question_groups`
-and `behavior`. Example (truncated):
+and `behavior`. Optional per-field conversation hints (all backwards-compatible):
+
+| Key | Effect |
+|---|---|
+| `prefill: "reporter"` | The app fills this field with the signed-in user (managed configuration `reporter_name`) and never asks it. If no user is provisioned, it's asked like any other field. |
+| `ask_phrase` | Clause used when several missing open-answer fields are asked in one question, e.g. `"where it happened"`. Without it, `"the <label>"` is used. |
+| `ask_alone: true` | Never combine this field with others (safety-critical, or needs a focused answer). Enum, boolean and number fields are always asked on their own. |
+
+Example (truncated):
 
 ```json
 {

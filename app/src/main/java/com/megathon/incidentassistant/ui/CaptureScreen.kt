@@ -155,6 +155,8 @@ private fun WaveformStage(state: UiState, onStartRecording: () -> Unit) {
             state.processing -> CircularProgressIndicator(Modifier.size(72.dp))
 
             else -> {
+                // Resolved here: stringResource is @Composable, the semantics lambda is not.
+                val idleDescription = stringResource(R.string.mic_state_idle)
                 val pulse = rememberInfiniteTransition(label = "idle")
                 val glow by pulse.animateFloat(
                     initialValue = 0.10f,
@@ -176,7 +178,7 @@ private fun WaveformStage(state: UiState, onStartRecording: () -> Unit) {
                     contentPadding = PaddingValues(0.dp),
                     modifier = Modifier
                         .size(120.dp)
-                        .semantics { stateDescription = stringResource(R.string.mic_state_idle) },
+                        .semantics { stateDescription = idleDescription },
                 ) {
                     Icon(
                         Icons.Filled.Mic,

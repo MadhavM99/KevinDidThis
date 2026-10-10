@@ -20,4 +20,10 @@ sealed interface FormToolCall {
     data class RecordFields(val updates: List<FieldUpdate>) : FormToolCall
     data class AskUser(val fieldId: String?, val question: String) : FormToolCall
     data class SubmitReport(val summary: String?) : FormToolCall
+
+    /**
+     * The utterance is not about an incident or this form (greeting, weather, a joke).
+     * [unsure] = the model cannot tell. Never changes the form; the session redirects.
+     */
+    data class OffTopic(val unsure: Boolean) : FormToolCall
 }

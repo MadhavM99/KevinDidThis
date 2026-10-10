@@ -19,6 +19,8 @@ enum class FastIntent {
     CANCEL,
     REPEAT,
     START_OVER,
+    /** Obvious chit-chat ("hello", "tell me a joke"): redirected without a model call. */
+    SMALL_TALK,
 }
 
 object FastIntents {
@@ -58,6 +60,16 @@ object FastIntents {
         ),
         FastIntent.START_OVER to setOf(
             "start over", "start again", "new report", "restart", "reset", "begin again",
+        ),
+        // Only unmistakable whole utterances; anything else goes to the model, which can
+        // also answer off_topic. "thanks" alone is not here: it may close a question.
+        FastIntent.SMALL_TALK to setOf(
+            "hello", "hi", "hey", "hello there", "hi there", "hey there", "good morning",
+            "good afternoon", "good evening", "how are you", "hi how are you",
+            "hello how are you", "how are you doing", "what's up", "tell me a joke",
+            "tell me something funny", "what's the weather", "what's the weather today",
+            "what is the weather", "what is the weather today", "how's the weather",
+            "what time is it", "who are you", "what's your name", "what is your name",
         ),
     )
 

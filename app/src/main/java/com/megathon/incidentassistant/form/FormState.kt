@@ -96,6 +96,11 @@ class FormState(val schema: FormSchema) {
     private val values = LinkedHashMap<String, FieldValue>()
     private var utteranceCounter = 0
 
+    /** Fields the app filled from trusted context ([prefill]); model updates never change them. */
+    private val appProvided = mutableSetOf<String>()
+
+    fun isAppProvided(fieldId: String): Boolean = fieldId in appProvided
+
     fun beginUtterance(): Int {
         utteranceCounter += 1
         return utteranceCounter
@@ -128,6 +133,7 @@ class FormState(val schema: FormSchema) {
     ): ApplyResult {
         val field = schema.field(fieldId)
             ?: return ApplyResult(fieldId, accepted = false, reason = "unknown field")
+        if (fieldId in appProvided) return ApplyResult(fieldId, accepted = false, reason = "set by the app")
         if (status == UpdateStatus.UNKNOWN) return markUnknown(fieldId, evidence)
 
         val normalized = when (val result = FieldNormalizer.normalize(field, rawValue)) {
@@ -178,6 +184,29 @@ class FormState(val schema: FormSchema) {
         return ApplyResult(fieldId, accepted = true)
     }
 
+    /**
+     * A value the app knows from trusted context (e.g. the signed-in reporter). Validated
+     * like any other value; on success the field is filled and locked against model
+     * updates. The user can still change it on the Review screen ([setDirect]).
+     */
+    fun prefill(fieldId: String, value: String, evidence: String): ApplyResult {
+        val field = schema.field(fieldId)
+            ?: return ApplyResult(fieldId, accepted = false, reason = "unknown field")
+        val normalized = when (val result = FieldNormalizer.normalize(field, value)) {
+            is Normalization.Rejected -> return ApplyResult(fieldId, accepted = false, reason = result.reason)
+            is Normalization.Ok -> result.value
+        }
+        values[fieldId] = FieldValue(
+            value = normalized,
+            confidence = 1.0,
+            evidence = evidence,
+            status = FieldStatus.FILLED,
+            utterance = 0,
+        )
+        appProvided += fieldId
+        return ApplyResult(fieldId, accepted = true)
+    }
+
     /** The user confirmed an unsure (AMBIGUOUS) value out loud — it now counts as filled. */
     fun confirm(fieldId: String, evidence: String? = null): ApplyResult {
         val existing = values[fieldId]
@@ -224,6 +253,7 @@ class FormState(val schema: FormSchema) {
 
     fun reset() {
         values.clear()
+        appProvided.clear()
         utteranceCounter = 0
     }
 

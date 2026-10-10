@@ -96,6 +96,10 @@ object ToolCallParser {
                 (arguments["summary"] as? JsonPrimitive)?.contentOrNull,
             )
 
+            "off_topic" -> FormToolCall.OffTopic(
+                unsure = (arguments["unsure"] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() ?: false,
+            )
+
             else -> {
                 warnings += "unknown tool \"$name\""
                 null

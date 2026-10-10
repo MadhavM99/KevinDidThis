@@ -45,6 +45,7 @@ object ExtractionPromptBuilder {
         for (field in schema.fields) {
             val value = state.get(field.id)
             val shown = when {
+                state.isAppProvided(field.id) -> "${value.value} (set by the app: never output this field)"
                 value.status == FieldStatus.UNKNOWN -> "(not specified)"
                 value.value.isBlank() -> "(missing)"
                 value.status == FieldStatus.AMBIGUOUS -> "${value.value} (unsure)"
@@ -57,6 +58,8 @@ object ExtractionPromptBuilder {
         appendLine("OUTPUT FORMAT — exactly one JSON object, no prose, no markdown fences:")
         appendLine("""<tool_call>{"tool":"record_fields","arguments":{"updates":[{"field":"<field id>","value":"<string>","confidence":0.0,"evidence":"<user's words>","status":"inferred"}]}}</tool_call>""")
         appendLine("""If the user said nothing that fits a field: <tool_call>{"tool":"record_fields","arguments":{"updates":[]}}</tool_call>""")
+        appendLine("""If the user is not talking about an incident or this form at all (greeting, small talk, weather, a joke, a question for you): <tool_call>{"tool":"off_topic","arguments":{}}</tool_call>""")
+        appendLine("""If you cannot tell whether they are describing an incident: <tool_call>{"tool":"off_topic","arguments":{"unsure":true}}</tool_call>""")
         appendLine()
         appendLine("RULES:")
         appendLine("1. Record EVERY field the user gave information about, not only the one that was asked.")
@@ -66,6 +69,8 @@ object ExtractionPromptBuilder {
         appendLine("5. status \"answered\" = stated directly or a correction (\"actually it was 11\"); \"inferred\" = implied; \"unknown\" = the user does not know or wants to skip that field (value \"\").")
         appendLine("6. Confidence: 0.9+ explicit, 0.6-0.9 implied, below 0.6 unsure.")
         appendLine("7. Facts that fit no field are ignored. Never call submit_report: only the user can file the report.")
+        appendLine("8. Damage, leaks, injuries, faults or hazards described in plain words ARE incidents. A short answer to the question just asked (\"medium\", \"near the lobby\") is never off_topic.")
+        appendLine("9. A value \"set by the app\" is final; the person speaking is that reporter, not an involved person or witness unless they say so.")
     }
 
     fun userPrompt(pendingField: FormField?, utterance: String): String =

@@ -135,6 +135,22 @@ demo banner.
 `scripts/fetch-whisper-sdk.sh`. `pickFirsts` keeps one copy of each, and llama.cpp doesn't
 use them. Confirm that Whisper still initialises after this change (see the device checklist).
 
+## Host verification (2026-10-11)
+
+`./gradlew :app:testDebugUnitTest`: **94 tests, 0 failures**. New suites:
+`IncidentSessionTest` (30), `ExtractionScenariosTest` (10), `ToolExecutorTest` (10),
+`ExtractionEngineTest` (9), `DialogPolicyTest` (7), `FastIntentsTest` (2) and
+`VoiceLoopEndToEndTest` (1). Plus the existing suites.
+
+`./gradlew :app:assembleDebug` succeeds against the real GenieX 0.7.1 AAR. The APK contains
+`libgeniex_plugin_llama_cpp.so` and `libggml-htp-v75.so`.
+
+That machine had no QPM Whisper/TTS SDK jars (`app/libs/` is git-ignored), so the build
+used compile-only API stubs added through a Gradle `--init-script`. Nothing from them is
+packaged or committed. Build a real APK with Kevin's `fetch-*-sdk.sh` jars in place.
+
+All host results use a scripted LLM. None of them measure Gemma.
+
 ## On-device acceptance (still to run on the QIDK)
 
 1. GGUF imports and loads: note the compute unit that loads (`npu`/`gpu`/`cpu`), the load
