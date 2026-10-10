@@ -234,15 +234,17 @@ swapped in later if ever needed). Canonical copy:
   the assistant keeps asking until every required field is filled (or explicitly marked
   "not specified" after an audible confirmation), so a report is always submittable.
 
-### 3.5 Form source & caching (proxy)
+### 3.5 Form source & caching (server)
 
-- Primary source: `GET {proxy}/api/v1/forms/{form_id}` (§8.1) at app start / on demand.
-- Cache: the last good schema is persisted (`filesDir/forms/<id>.json`); the bundled
-  `assets/forms/incident_report.json` is the always-available fallback (demo-safe even
-  offline). Cache refreshes when `version` changes upstream.
-- A schema change never affects a running session; the next session picks it up.
-- Any JSON with the §3.1 shape works — adding a form to the proxy needs **zero app
-  changes**.
+- Primary source: `GET {server}/api/v1/forms/{form_id}` (contract: `docs/PROXY_API.md`)
+  at every app start and when the user taps **Refresh form**.
+- Fallback chain: last good cached schema (`filesDir/forms/<id>.json`) → bundled
+  `assets/forms/*.json`. The demo never depends on the network.
+- Admins update definitions on the server; the app only reads them. A refresh — or the
+  next app start — picks up changes.
+- A refresh loads the new definition and starts a fresh draft; a schema change never
+  affects a running session otherwise.
+- Any JSON with the §3.1 shape works — publishing a new form needs **zero app changes**.
 
 ---
 
@@ -531,6 +533,8 @@ truth) + `ReportSubmitter` (proxy POST, §8.1).
 The proxy is any HTTP service implementing the two calls below; the base URL is
 configurable in `Settings → Proxy URL`. Everything else stays on-device. A reference
 implementation ships in `tools/mock_proxy.py` (Python, stdlib) for development and demo.
+The exact requests the app makes are documented in `docs/PROXY_API.md`; form definitions
+are managed on the server side, never by the app.
 
 **Fetch form**
 
@@ -571,13 +575,15 @@ timeout / 5xx → outbox retry with backoff
 ```
 KevinDidThis/                                  single Android Studio project
 ├── docs/
-│   └── DESIGN.md                              ← this document
+│   ├── DESIGN.md                              ← this document
+│   └── PROXY_API.md                           server contract: form fetch + report submit
 ├── app/
 │   ├── build.gradle.kts
 │   └── src/
 │       ├── main/
 │       │   ├── AndroidManifest.xml            (RECORD_AUDIO + INTERNET for the proxy)
-│       │   ├── assets/forms/incident_report.json   ← dynamic form definition (§3.1)
+│       │   ├── assets/forms/incident_report.json    ← dynamic form definition (§3.1)
+│       │   ├── assets/forms/workplace_incident.json ← realistic demo form (18 fields)
 │       │   └── java/com/megathon/incidentassistant/
 │       │       ├── AppContainer.kt            manual DI + AppConfig (proxy URL, placeholder switch)
 │       │       ├── MainActivity.kt            Compose host, 3-step navigation
@@ -591,7 +597,7 @@ KevinDidThis/                                  single Android Studio project
 │       │       └── ui/                        Capture / Review / Done screens, ViewModel, Theme
 │       └── test/java/com/megathon/incidentassistant/   JVM unit tests
 ├── tools/
-│   ├── mock_proxy.py                          local proxy: serves forms + accepts reports (§8.1)
+│   ├── mock_proxy.py                          stand-in server: serves forms + accepts reports
 │   ├── export_llm.sh                          AI Hub export recipes (Qwen3-4B / Llama-3.2-3B)
 │   ├── export_asr_tts.md                      QPM Voice AI ASR/TTS package + notebook steps
 │   └── push_models.sh                         adb push bundle → /data/local/tmp + env setup
