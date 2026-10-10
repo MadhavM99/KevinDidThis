@@ -193,12 +193,10 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
     }
 
     /**
-     * Directory containing the model files. Defaults to the app-specific external dir, which
-     * needs no root (the sample app uses /vendor/etc/whisper, which requires `adb remount`).
-     * Override with `adb shell" setprop debug.whisper.modeldir ..." is not read here - set
-     * [MODEL_DIR_PROPERTY] via `am` is overkill, so the path is simply:
-     *   1. files pushed into the app's own `files/whisper` dir, else
-     *   2. the sample's /vendor/etc/whisper.
+     * Locates the model directory: the app-specific external dir first (no root needed,
+     * see `scripts/push-whisper-models.sh`), then the sample app's /vendor/etc/whisper.
+     * When nothing is found, a path is returned anyway so `Whisper.init` reports the
+     * specific failure instead of a null-dereference.
      */
     private fun resolveModelDir(): String =
         WhisperModels.resolve(appContext)
