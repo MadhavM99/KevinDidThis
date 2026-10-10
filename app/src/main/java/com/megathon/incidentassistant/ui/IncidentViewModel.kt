@@ -135,7 +135,7 @@ class IncidentViewModel(
     init {
         viewModelScope.launch {
             // TTS first: its SDK sets the DSP thread parameters (128 KB stack) before any
-            // other FastRPC user creates the process threads — see MeloTtsSpeechSynthesizer.
+            // other FastRPC user creates the process threads — see VoiceAiTtsSynthesizer.
             // Then ASR (Whisper.init() registers its model dir on the DSP library search
             // path, where Gemma's Hexagon backend finds libggml-htp-vXX.so), then the LLM.
             // Each stage is isolated: a TTS (or any) warm-up failure must never block the
