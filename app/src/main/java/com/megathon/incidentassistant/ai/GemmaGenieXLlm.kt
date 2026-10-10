@@ -133,39 +133,51 @@ class GemmaGenieXLlm(
 
         val out = StringBuilder()
         val finished = AtomicBoolean(false)
-        coroutineScope {
-            // The native generate() call blocks until done, so cancelling the collector
-            // alone would not stop it: stopStream() is what interrupts the decode loop.
-            val stopper = launch {
-                try {
-                    awaitCancellation()
-                } finally {
-                    if (!finished.get()) {
-                        withContext(NonCancellable + Dispatchers.IO) { llm.stopStream() }
-                    }
-                }
-            }
-            try {
-                llm.generateStreamFlow(templated, config).collect { result ->
-                    when (result) {
-                        is LlmStreamResult.Token -> out.append(result.text)
-                        is LlmStreamResult.Completed -> result.profile.let { p ->
-                            Log.d(
-                                TAG,
-                                "gen prompt=${p.promptTokens}tok ttft=${p.ttftMs.toLong()}ms " +
-                                    "out=${p.generatedTokens}tok decode=${"%.1f".format(p.decodingSpeed)}tok/s " +
-                                    "stop=${p.stopReason}",
-                            )
+        val t0 = System.nanoTime()
+        Log.i(TAG, "GEMMA_INFERENCE_START unit=$computeUnit")
+        try {
+            coroutineScope {
+                // The native generate() call blocks until done, so cancelling the collector
+                // alone would not stop it: stopStream() is what interrupts the decode loop.
+                val stopper = launch {
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        if (!finished.get()) {
+                            withContext(NonCancellable + Dispatchers.IO) { llm.stopStream() }
                         }
-                        is LlmStreamResult.Error ->
-                            throw LlmException("generation failed: ${result.throwable.javaClass.simpleName}", result.throwable)
                     }
                 }
-            } finally {
-                finished.set(true)
-                stopper.cancel()
+                try {
+                    llm.generateStreamFlow(templated, config).collect { result ->
+                        when (result) {
+                            is LlmStreamResult.Token -> out.append(result.text)
+                            is LlmStreamResult.Completed -> result.profile.let { p ->
+                                Log.d(
+                                    TAG,
+                                    "gen prompt=${p.promptTokens}tok ttft=${p.ttftMs.toLong()}ms " +
+                                        "out=${p.generatedTokens}tok decode=${"%.1f".format(p.decodingSpeed)}tok/s " +
+                                        "stop=${p.stopReason}",
+                                )
+                            }
+                            is LlmStreamResult.Error ->
+                                throw LlmException("generation failed: ${result.throwable.javaClass.simpleName}", result.throwable)
+                        }
+                    }
+                } finally {
+                    finished.set(true)
+                    stopper.cancel()
+                }
             }
+        } catch (e: CancellationException) {
+            Log.i(TAG, "CANCELLED gemma after=${(System.nanoTime() - t0) / 1_000_000}ms")
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "GEMMA_INFERENCE_FAILURE after=${(System.nanoTime() - t0) / 1_000_000}ms", e)
+            throw e
         }
+        // Generation has returned (Completed/stop word): the native decode loop is done.
+        Log.i(TAG, "GEMMA_INFERENCE_SUCCESS took=${(System.nanoTime() - t0) / 1_000_000}ms chars=${out.length}")
         out.toString()
     }
 
@@ -198,7 +210,7 @@ class GemmaGenieXLlm(
             val modelPath = importLocalModel()
 
             var lastError: Throwable? = null
-            for (unit in settings.computeUnits) {
+            for (unit in diagnosticComputeUnits() ?: settings.computeUnits) {
                 val built = LlmWrapper.builder()
                     .llmCreateInput(
                         LlmCreateInput(
@@ -229,6 +241,18 @@ class GemmaGenieXLlm(
             Log.e(TAG, "load failed", e)
             throw e
         }
+    }
+
+    /**
+     * Diagnostics only (NPU-contention experiments): a `LLM_COMPUTE_UNIT` file in the model
+     * dir holding `gpu` or `cpu` loads Gemma there instead of the NPU, so Whisper/TTS have
+     * the HTP to themselves. Absent (the default) → [Settings.computeUnits].
+     */
+    private fun diagnosticComputeUnits(): List<String>? {
+        val unit = runCatching { File(modelDir, "LLM_COMPUTE_UNIT").readText().trim().lowercase() }
+            .getOrNull()?.takeIf { it in setOf("npu", "gpu", "cpu") } ?: return null
+        Log.w(TAG, "diagnostic override: loading on $unit (LLM_COMPUTE_UNIT)")
+        return listOf(unit)
     }
 
     /**

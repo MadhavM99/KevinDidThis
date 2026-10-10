@@ -1,11 +1,8 @@
-# Real TTS: Qualcomm PiperTTS-EN (VoiceAI TTS)
+# Real TTS: Qualcomm MeloTTS (VoiceAI TTS)
 
 Speech output uses the **Qualcomm VoiceAI TTS SDK** (`voiceai_tts`, v1.1.1.0) with the
-`pipertts_en` model from AI Hub (MIT). Piper-on-NPU references: the AI Hub model card
-`pipertts_en`, the `qai-appbuilder` sample `pipertts_en` ("runs fully on the Snapdragon
-NPU (HTP)"), and the Audio Analytics container docs (Whisper / MeloTTS / PiperTTS all on
-the NPU; `piper-tts-en` @ 22050 Hz). Same rule as ASR: every detail below is read from the
-shipped SDK or observed on the device, never guessed.
+`melotts_en` model from AI Hub. Same rule as ASR: every detail below is read from the shipped
+SDK or observed on the device, never guessed.
 
 ## Sources of truth
 
@@ -27,10 +24,10 @@ sudo -E qpm-cli --install voiceai_tts -v 1.1.1.0
 ./scripts/fetch-tts-sdk.sh
 
 # 3. build the combined model from the AI Hub download (see below)
-./scripts/build-piper-model.sh models/pipertts_en_8gen3
+./scripts/build-melo-model.sh models/melotts_en_8gen3
 
 # 4. push model + DSP libs, then install
-./scripts/push-tts-model.sh models/pipertts_en_8gen3/piper_en.64_bit.qnn_v2.50.0.qnn
+./scripts/push-tts-model.sh models/melotts_en_8gen3/melo_en.64_bit.qnn_v2.50.0.qnn
 ./gradlew :app:installDebug
 ```
 
@@ -55,31 +52,34 @@ int TTSModel::loadModel(const char *model_file) {
 So the SDK wants **one combined blob**. It is `[TTS.setSkelLibPath]` that takes a directory —
 `TTS.java` appends it to `ADSP_LIBRARY_PATH`.
 
-AI Hub's "Qualcomm Voice AI" download ships the Piper sub-models **separately**:
+AI Hub's "Qualcomm Voice AI" download ships the 8 sub-models **separately**:
 
 ```
-t5_encoder.bin  t5_decoder.bin  encoder.bin  flow.bin  decoder.bin  sdp.bin  config.json
+encoder.bin  flow.bin  decoder.bin  bert_wrapper.bin
+t5_encoder.bin  t5_decoder.bin  bert_en_tokenizer.bin  bert_normalizer.bin  config.json
 ```
 
-`scripts/build-piper-model.sh` recombines them using the piper conversion script from the
-VoiceAI_TTS package (a `qnn_model_generation.py` in the piper notebook dir; exact flag
-names get confirmed against the shipped script on the build machine — `PIPER_GEN_ARGS`
-overrides them). Pi-simple, pure stdlib, no torch — runs in seconds:
+`scripts/build-melo-model.sh` recombines them using Qualcomm's own
+`qnn_model_generation.py`. That script is pure stdlib (`struct`, `argparse`, `math`) and the
+pronunciation dictionaries it needs (`en_dict_generation/`, `en_g2p_dict_generation/`) ship
+**pre-generated**, so no notebooks, no torch, no MeloTTS checkout — it runs in seconds:
 
 ```
-piper_en.64_bit.qnn_v2.50.0.qnn   (combined TTS container, magic of the VoiceAI format)
+melo_en.64_bit.qnn_v2.50.0.qnn   312 MB   magic "0LEM" / "MEL0MODE"
 ```
 
 Argument mapping (AI Hub name → script flag):
 
-| AI Hub file | `--flag` (build-piper-model.sh defaults; confirm on device) |
+| AI Hub file | `--flag` |
 |---|---|
-| `t5_encoder.bin` | `--t5_encoder_model` |
-| `t5_decoder.bin` | `--t5_decoder_model` |
-| `encoder.bin` | `--vits_encoder_model` |
-| `flow.bin` | `--vits_flow_model` |
-| `decoder.bin` | `--vits_decoder_model` |
-| `sdp.bin` | `--sdp_model` |
+| `bert_wrapper.bin` | `--bert_model` |
+| `bert_en_tokenizer.bin` | `--bert_tokenizer` |
+| `bert_normalizer.bin` | `--bert_normalizer` |
+| `encoder.bin` | `--melo_encoder_model` |
+| `flow.bin` | `--melo_flow_model` |
+| `decoder.bin` | `--melo_decoder_model` |
+| `t5_encoder.bin` | `--g2p_enc_model` |
+| `t5_decoder.bin` | `--g2p_dec_model` |
 
 ## API used
 
@@ -89,7 +89,7 @@ tts.setLanguage("English")     // "English"/"Chinese"/"Spanish", not "en"
 tts.setModelPath(modelFile)    // FILE
 tts.setAudioEncoding("0")      // LINEAR16
 tts.setSpeechRate("1.0"); tts.setPitch("0.0"); tts.setVolumeGain("0.0")
-tts.setSampleRate("22050")     // Piper EN (MeloTTS used 44100; the SDK honours the asset)
+tts.setSampleRate("44100")
 tts.setSkelLibPath(dir)        // DIRECTORY -> ADSP_LIBRARY_PATH
 tts.init(); tts.start(text); tts.stop(); tts.deInit()
 ```
@@ -104,8 +104,8 @@ void onError(int errorCode);
 default void onPerformanceResult(int processingTimeMs, int audioLengthInMs, float rtf);
 ```
 
-The SDK only *produces* PCM — playback is the caller's job, so `VoiceAiTtsSynthesizer`
-creates the `AudioTrack` from the values in `onStart` rather than hardcoding the rate.
+The SDK only *produces* PCM — playback is the caller's job, so `MeloTtsSpeechSynthesizer`
+creates the `AudioTrack` from the values in `onStart` rather than hardcoding 44100.
 
 The guide recommends keeping the engine initialised between utterances (model load is
 expensive), so `init()` happens once on a worker thread and `deInit()` only in `shutdown()`.
@@ -116,7 +116,7 @@ Pushed by `scripts/push-tts-model.sh` into
 `/sdcard/Android/data/com.megathon.incidentassistant/files/tts/` (no root needed, unlike the
 sample's `/vendor/etc/tts/`):
 
-- `piper_en.64_bit.qnn_v2.50.0.qnn` — built by `scripts/build-piper-model.sh`
+- `melo_en.64_bit.qnn_v2.50.0.qnn`
 - `libtts_impl_skel.so` — from `melo_sdk/libs/npu/rpc_libraries/cdsp/`
 - `libQnnHtpV75.so` + `libQnnSystem.so` — from `${QNN}/lib/hexagon-v75/unsigned/`
   (V75 = SM8650 / Snapdragon 8 Gen 3; note these are the **DSP-side** builds, not the

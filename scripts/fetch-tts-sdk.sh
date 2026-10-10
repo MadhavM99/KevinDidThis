@@ -29,6 +29,6 @@ cp -v "$SDK/android/arm64-v8a/libtts_jni.so" "$ARM/"
 
 echo
 echo "Done. Device-side files still required (see docs/TTS.md):"
-echo "  piper_en.64_bit.qnn_v2.50.0.qnn  <- combined model (build it, see docs/TTS.md)"
+echo "  melo_en.64_bit.qnn_v2.50.0.qnn   <- combined model (build it, see docs/TTS.md)"
 echo "  libtts_impl_skel.so              <- melo_sdk/libs/npu/rpc_libraries/cdsp/"
 echo "  libQnnHtpV75.so + libQnnSystem.so <- \${QNN}/lib/hexagon-v75/unsigned/"

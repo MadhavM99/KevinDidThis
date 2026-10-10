@@ -2,14 +2,12 @@ package com.megathon.incidentassistant
 
 import android.app.Application
 import android.content.Context
-import com.megathon.incidentassistant.ai.AndroidSpeechSynthesizer
 import com.megathon.incidentassistant.ai.GemmaGenieXLlm
 import com.megathon.incidentassistant.ai.GemmaModels
 import com.megathon.incidentassistant.ai.LlmBackend
+import com.megathon.incidentassistant.ai.MeloTtsSpeechSynthesizer
 import com.megathon.incidentassistant.ai.SpeechSynthesizer
 import com.megathon.incidentassistant.ai.SpeechToText
-import com.megathon.incidentassistant.ai.TtsModels
-import com.megathon.incidentassistant.ai.VoiceAiTtsSynthesizer
 import com.megathon.incidentassistant.ai.WhisperSpeechToText
 import com.megathon.incidentassistant.data.InMemoryReportRepository
 import com.megathon.incidentassistant.data.ReportRepository
@@ -44,8 +42,7 @@ object AppConfig {
  *
  *  - ASR: Qualcomm Whisper SDK on the Hexagon HTP (`scripts/push-whisper-models.sh`)
  *  - LLM: Gemma 4 E2B through GenieX llama.cpp on the Hexagon NPU (`scripts/push-gemma-model.sh`)
- *  - TTS: PiperTTS-EN through the VoiceAI TTS SDK on the NPU (`scripts/push-tts-model.sh`),
- *    with Android's system TTS as an availability fallback when the model is absent
+ *  - TTS: Qualcomm MeloTTS on the NPU (`scripts/push-tts-model.sh`)
  *
  * See docs/ASR.md, docs/LLM.md and docs/TTS.md.
  */
@@ -60,15 +57,7 @@ class AppContainer(context: Context) {
         GemmaModels.appDir(appContext) ?: appContext.filesDir.absolutePath,
     )
 
-    /**
-     * Availability chain: PiperTTS-EN through the VoiceAI TTS SDK when its model is on the
-     * device, otherwise Android's built-in TTS. TTS talks to the user many times per
-     * conversation (questions, confirmations, "filed"), so a missing model must never mean
-     * permanent silence — the fallback keeps the voice loop available everywhere.
-     */
-    val synthesizer: SpeechSynthesizer =
-        if (TtsModels.resolve(appContext) != null) VoiceAiTtsSynthesizer(appContext)
-        else AndroidSpeechSynthesizer(appContext)
+    val synthesizer: SpeechSynthesizer = MeloTtsSpeechSynthesizer(appContext)
     val repository: ReportRepository = InMemoryReportRepository()
 
     /** Bundled sample by default; the server (when configured) replaces it. */

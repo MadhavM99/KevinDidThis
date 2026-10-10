@@ -148,8 +148,27 @@ therefore:
 
 1. flips the mic stream to silence (`goSilent()`), so the VAD observes end-of-speech naturally
 2. waits up to 4 s for `onFinished()`
-3. only then calls `whisper.stop()` as a fallback, and waits up to 2 s more
+3. calls `whisper.stop()` once — after the finish (sample parity: the SDK ignores a new
+   `start()` until the finished session is stopped), or as a forced stop if no finish came,
+   then waits up to 2 s more
 4. returns whatever final segments accumulated
+
+## Session lifecycle between turns
+
+`AsrSessionController` (pure Kotlin, host-tested in `AsrSessionControllerTest` and
+`VoiceTurnLifecycleTest`) owns start → finish/error → stop → next start:
+
+- `whisper.stop()` is only ever called from `stopListening()` / a restart, under the session
+  lock — never from inside `onFinished`, where it could land on a session that started meanwhile.
+- `onError` (NO_SPEECH_TIMEOUT, or an HTP execution failure) ends the utterance like a VAD finish,
+  so the UI re-asks instead of staying on "Listening" with nothing transcribed.
+- A session never stopped is stopped and its finish awaited before the next `start()`.
+- Callbacks while no session is open are dropped (`STALE_CALLBACK` in logcat).
+- A failed `start()` frees the microphone and is reported (`MICROPHONE_FAILURE`), not swallowed.
+
+Device diagnostics: `adb logcat -s IncidentTurn WhisperSTT WhisperSTT.mic MeloTTS GemmaLlm`.
+`LLM_COMPUTE_UNIT` (containing `gpu` or `cpu`) in the Gemma model dir loads Gemma off the NPU, for
+NPU-contention experiments only.
 
 ## Audio
 

@@ -8,18 +8,12 @@ import android.os.Bundle
 import android.util.Log
 import com.qualcomm.qti.voice.assist.whisper.sdk.Whisper
 import com.qualcomm.qti.voice.assist.whisper.sdk.WhisperResponseListener
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.InputStream
 
@@ -48,30 +42,38 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
 
     private val appContext = context.applicationContext
 
-    private val partial = MutableStateFlow("")
-    override val partialTranscript: StateFlow<String> = partial.asStateFlow()
-
-    /** Emitted when the SDK's VAD closed the utterance (single-shot auto-stop). */
-    private val completed = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-    override val utteranceFinished: Flow<Unit> = completed
-
     @Volatile private var whisper: Whisper? = null
-    @Volatile private var audio: MicInputStream? = null
-
-    /** Final text accumulated from `isFinal == true` callbacks. */
-    private val finalText = StringBuilder()
-    /** Rolling partial text, cleared whenever a final segment lands. */
-    private val partialText = StringBuilder()
-
-    private var finished = CompletableDeferred<Unit>()
-    private var lastError: Int? = null
     private var ready = false
 
-    /** Serialises start/stop so two sessions can never interleave their mic streams. */
-    private val sessionMutex = Mutex()
+    /**
+     * Session lifecycle (start → finish/error → stop → next start) lives in
+     * [AsrSessionController] so its ordering is unit-tested on the host. In short: the SDK
+     * session is closed with stop() before the next start() — never from inside an SDK
+     * callback — and an SDK error ends the utterance instead of leaving "listening" open.
+     */
+    private val sessions = AsrSessionController(
+        engine = object : AsrSessionController.Engine {
+            override fun openInput(): AsrSessionController.Input = MicInputStream().also { it.start() }
 
-    /** True while a `start()` session is open and not yet closed by the SDK. */
-    @Volatile private var sessionActive = false
+            override suspend fun start(input: AsrSessionController.Input) {
+                val w = whisper ?: error("Whisper SDK not initialised (model files missing?)")
+                withContext(Dispatchers.Main) { w.start(input as MicInputStream) }
+            }
+
+            override fun stop() {
+                whisper?.stop()
+            }
+        },
+        noSpeechErrorCode = WhisperResponseListener.NO_SPEECH_TIMEOUT,
+        flushTimeoutMs = FLUSH_TIMEOUT_MS,
+        forceStopTimeoutMs = FORCE_STOP_TIMEOUT_MS,
+        log = { Log.i(TAG, it) },
+    )
+
+    override val partialTranscript: StateFlow<String> = sessions.partialTranscript
+
+    /** Emitted when the SDK's VAD closed the utterance (single-shot auto-stop) or it failed. */
+    override val utteranceFinished: Flow<Unit> = sessions.utteranceFinished
 
     /** Serialises [prepare]; the native engine must be created exactly once per process. */
     private val initMutex = Mutex()
@@ -119,59 +121,18 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
     }
 
     override suspend fun startListening() {
-        sessionMutex.withLock {
-            resetUtterance()
-            lastError = null
-            val w = whisper ?: error("Whisper SDK not initialised (model files missing?)")
-
-            // The SDK closes every session with stop() and a new start() while the previous
-            // session is still open is silently ignored (listening UI, no transcription —
-            // seen with successive questions). The QIDK sample calls stop() from onFinished;
-            // this guard also covers forced stops and flushes that timed out.
-            if (sessionActive) {
-                Log.d(TAG, "closing previous session before restart")
-                runCatching { w.stop() }
-            }
-
-            val mic = MicInputStream().also { it.start() }
-            audio = mic
-            sessionActive = true
-            try {
-                withContext(Dispatchers.Main) { w.start(mic) }
-                Log.d(TAG, "whisper.start ok")
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "whisper.start failed: ${e.message}")
-                sessionActive = false
-            }
-        }
+        if (whisper == null) error("Whisper SDK not initialised (model files missing?)")
+        sessions.start()
     }
 
-    override suspend fun stopListening(): String = sessionMutex.withLock {
-        val w = whisper ?: throw IllegalStateException("ASR unavailable")
-
-        // Let the VAD see the end of the utterance: swap mic audio for silence and wait for
-        // the SDK's own end-of-speech -> flush -> onFinished sequence.
-        audio?.goSilent()
-        val flushed = withTimeoutOrNull(FLUSH_TIMEOUT_MS) { finished.await() }
-
-        if (flushed == null) {
-            // No end-of-speech detected in time; force a stop and keep whatever finals we got.
-            Log.w(TAG, "flush timed out, forcing stop (error=$lastError)")
-            w.stop()
-            withTimeoutOrNull(FORCE_STOP_TIMEOUT_MS) { finished.await() }
-        }
-
-        audio?.release()
-        audio = null
-        sessionActive = false
-
-        val text = finalText.toString().trim()
-        if (lastError == WhisperResponseListener.NO_SPEECH_TIMEOUT && text.isEmpty()) {
-            throw NoSpeechException("no speech detected")
-        }
-        text
+    /**
+     * Ends the utterance without losing its tail: calling `whisper.stop()` on a live stream
+     * discards the un-flushed buffer, so the mic is swapped for silence and the SDK's own
+     * end-of-speech → flush → onFinished is awaited first (see [AsrSessionController]).
+     */
+    override suspend fun stopListening(): String {
+        if (whisper == null) throw IllegalStateException("ASR unavailable")
+        return sessions.stop()
     }
 
     override fun release() {
@@ -179,8 +140,7 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
         // observed to SIGSEGV inside WhisperLib::init (Android 14 / QIDK tombstone, same
         // process re-entering the screen). This backend is a singleton in [AppContainer],
         // so keep the initialised engine and only stop the microphone stream.
-        runCatching { audio?.release() }
-        audio = null
+        sessions.abandon()
     }
 
     /** True when the SDK initialised successfully with real model files on disk. */
@@ -197,25 +157,12 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
             extras: Bundle?,
         ) {
             if (code != VALID_TRANSCRIPTION && code != PROGRESS_INDICATOR) return
-            if (transcription.isEmpty()) return
-
-            synchronized(this@WhisperSpeechToText) {
-                if (isFinal) {
-                    partialText.setLength(0)
-                    if (finalText.isNotEmpty()) finalText.append(' ')
-                    finalText.append(transcription)
-                } else {
-                    partialText.setLength(0)
-                    partialText.append(transcription)
-                }
-                publish()
-            }
+            sessions.onTranscription(transcription, isFinal)
         }
 
         override fun onError(errorCode: Int, ex: Exception?) {
-            Log.e(TAG, "whisper error $errorCode: ${ex?.message}")
-            lastError = errorCode
-            if (!finished.isCompleted) finished.complete(Unit)
+            Log.e(TAG, "whisper error $errorCode: ${ex?.message}", ex)
+            sessions.onError(errorCode)
         }
 
         override fun onRecordingStopped() {
@@ -226,33 +173,16 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
 
         override fun onSpeechEnd() = Unit
 
-        /** All audio processed and the SDK has stopped itself -> release the waiter. */
+        /**
+         * All audio processed and the SDK has stopped itself. The matching `stop()` (QIDK
+         * sample parity) is issued by [stopListening], ordered before any next start().
+         */
         override fun onFinished() {
-            Log.d(TAG, "onFinished")
-            if (!finished.isCompleted) finished.complete(Unit)
-            completed.tryEmit(Unit) // single-shot: the pipeline may now stop + process
-            // Sample parity (Whisper_ASR.java): the SDK expects stop() after a finished
-            // session, otherwise the next start() is ignored. Safe after flush.
-            runCatching { whisper?.stop() }
-            sessionActive = false
+            sessions.onFinished()
         }
     }
 
     // ---------- helpers ----------
-
-    private fun resetUtterance() = synchronized(this) {
-        finalText.setLength(0)
-        partialText.setLength(0)
-        partial.value = ""
-        finished = CompletableDeferred()
-    }
-
-    /** Live caption = whatever has been finalised so far + the in-flight partial. */
-    private fun publish() {
-        val f = finalText.toString()
-        val p = partialText.toString()
-        partial.value = if (p.isEmpty()) f else if (f.isEmpty()) p else "$f $p"
-    }
 
     /**
      * Locates the model directory: the app-specific external dir first (no root needed,
@@ -289,7 +219,7 @@ class NoSpeechException(message: String) : Exception(message)
  * own worker thread, so [read] blocks. After [goSilent] the mic is released and zero-filled
  * frames are returned instead, which is what lets the VAD observe end-of-speech.
  */
-private class MicInputStream : InputStream() {
+private class MicInputStream : InputStream(), AsrSessionController.Input {
 
     private var record: AudioRecord? = null
     @Volatile private var silent = false
@@ -311,10 +241,15 @@ private class MicInputStream : InputStream() {
         check(r.state == AudioRecord.STATE_INITIALIZED) { "AudioRecord init failed" }
         r.startRecording()
         record = r
+        openedAt = System.currentTimeMillis()
+        Log.i(TAG, "MICROPHONE_READY buffer=${size}B")
     }
 
     /** Stop capturing and return silence so the VAD can close the utterance. */
-    fun goSilent() {
+    override fun goSilent() {
+        if (!silent && record != null) {
+            Log.i(TAG, "MICROPHONE_CLOSED captured=${totalBytes / 32000.0}s peak=$peak")
+        }
         silent = true
         runCatching { record?.stop() }
         runCatching { record?.release() }
@@ -322,13 +257,14 @@ private class MicInputStream : InputStream() {
     }
 
     /** Ends the stream: subsequent reads return -1, unblocking the SDK's read loop. */
-    fun release() {
+    override fun release() {
         closed = true
         goSilent()
     }
 
     override fun read(): Int = throw UnsupportedOperationException("byte-at-a-time not supported")
 
+    private var openedAt = 0L
     private var totalBytes = 0L
     private var peak = 0
     private var lastLogAt = 0L
@@ -341,6 +277,7 @@ private class MicInputStream : InputStream() {
         }
         val n = record!!.read(b, off, len, AudioRecord.READ_BLOCKING)
         if (n <= 0) return -1 // <=0 => end of stream, unblocks the SDK's read loop
+        if (totalBytes == 0L) Log.i(TAG, "AUDIO_BUFFER_RECEIVED first after ${System.currentTimeMillis() - openedAt}ms")
         totalBytes += n
         var i = off
         while (i < off + n - 1) {
