@@ -49,3 +49,7 @@ Thumbs.db
 *.log
 *.tmp
 *.bak
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
