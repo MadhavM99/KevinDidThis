@@ -7,8 +7,8 @@ The Android app is a pure client:
     2. POST the finished report when the user confirms
 
 In production that server is owned by whoever runs the workflow — the app never writes
-form definitions. Until that server exists, this script plays its role using the bundled
-form definitions.
+form definitions. Until that server exists, this script plays its role using the fixture
+definitions in `tools/forms/` (the app bundles no forms).
 
 Usage:
     python3 tools/mock_proxy.py --port 8787
@@ -27,7 +27,7 @@ Mock-only conveniences (the app does not call these):
 Simulating an admin updating a form: edit the JSON in the --forms directory (or point
 --forms at another folder). The app picks the change up on its next start/refresh.
 
-Point the app at it (AppConfig.PROXY_BASE_URL):
+Point the app at it (AppConfig.SERVER_BASE_URL):
     Emulator:            http://10.0.2.2:8787
     Device on the LAN:   http://<your-ip>:8787
     USB-connected QIDK:  adb reverse tcp:8787 tcp:8787  ->  http://127.0.0.1:8787
@@ -48,7 +48,7 @@ REPORT_ITEM = re.compile(r"^/api/v1/reports/([A-Za-z0-9_\-]+)$")
 
 
 class Handler(BaseHTTPRequestHandler):
-    forms_dir = "app/src/main/assets/forms"
+    forms_dir = "tools/forms"
     reports_dir = "/tmp/incident_reports"
 
     # ---------- helpers ----------
@@ -188,7 +188,7 @@ def main():
     parser.add_argument("--port", type=int, default=8787, help="port to listen on (default 8787)")
     parser.add_argument("--host", default="0.0.0.0", help="bind address (default 0.0.0.0)")
     parser.add_argument(
-        "--forms", default="app/src/main/assets/forms", help="directory with form definition JSON files"
+        "--forms", default="tools/forms", help="directory with form definition JSON files"
     )
     parser.add_argument(
         "--reports", default="/tmp/incident_reports", help="directory to store submitted reports"

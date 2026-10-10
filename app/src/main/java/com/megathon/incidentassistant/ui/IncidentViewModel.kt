@@ -38,7 +38,7 @@ data class UiState(
     val typedText: String = "",
     val partial: String = "",
     val transcript: String = "",
-    /** The dynamic form definition currently in use (from proxy or bundled asset). */
+    /** The dynamic form definition currently in use (fetched from the server). */
     val schema: FormSchema = FormSchema(id = ""),
     val values: Map<String, FieldValue> = emptyMap(),
     val followUpFieldId: String? = null,

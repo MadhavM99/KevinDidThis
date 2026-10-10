@@ -73,8 +73,8 @@ fun ReviewScreen(state: UiState, vm: IncidentViewModel) {
             )
         }
 
-        // The form is dynamic: fields, labels, types, options and required flags all come
-        // from the definition currently in use (assets/forms/*.json or the proxy).
+        // The form is dynamic and server-delivered: fields, labels, types, options and
+        // required flags all come from the definition currently in use.
         items(state.schema.fields, key = { it.id }) { field ->
             if (field.type == FieldType.ENUM || field.type == FieldType.BOOLEAN) {
                 OptionsGroup(

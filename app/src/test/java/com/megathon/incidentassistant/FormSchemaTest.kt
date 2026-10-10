@@ -56,10 +56,22 @@ class FormSchemaTest {
         )
     }
 
+    /**
+     * Form fixtures live outside the app (tools/forms) and are served by the mock
+     * server — the app itself ships no form definitions.
+     */
+    private fun fixture(name: String): File {
+        val candidates = listOf(
+            File("../../tools/forms/$name"),
+            File("../tools/forms/$name"),
+        )
+        return candidates.firstOrNull { it.exists() } ?: candidates.first()
+    }
+
     @Test
-    fun bundledIncidentFormIsValid() {
-        val file = File("src/main/assets/forms/incident_report.json")
-        assumeTrue("bundled asset not found (test working dir is not the app module)", file.exists())
+    fun incidentFormFixtureIsValid() {
+        val file = fixture("incident_report.json")
+        assumeTrue("fixture not found (test working dir is not the app module)", file.exists())
         val schema = FormSchemaParser.parse(file.readText())
         assertEquals("incident_report", schema.id)
         assertEquals(11, schema.fields.size)
@@ -69,9 +81,9 @@ class FormSchemaTest {
     }
 
     @Test
-    fun bundledWorkplaceFormIsValid() {
-        val file = File("src/main/assets/forms/workplace_incident.json")
-        assumeTrue("bundled asset not found (test working dir is not the app module)", file.exists())
+    fun workplaceFormFixtureIsValid() {
+        val file = fixture("workplace_incident.json")
+        assumeTrue("fixture not found (test working dir is not the app module)", file.exists())
         val schema = FormSchemaParser.parse(file.readText())
         assertEquals("workplace_incident", schema.id)
         assertEquals(18, schema.fields.size)
