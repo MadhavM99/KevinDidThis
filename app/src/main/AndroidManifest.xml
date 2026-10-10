@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Microphone only. There is deliberately NO INTERNET permission:
-         the challenge requires strictly on-device AI, and omitting it makes
-         accidental cloud calls impossible. -->
+    <!-- Microphone for voice capture. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Proxy API only: dynamic form fetch + report submit (docs/DESIGN.md §8.1).
+         The AI pipeline (ASR / LLM / TTS) still runs fully on-device. -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <uses-feature
         android:name="android.hardware.microphone"
