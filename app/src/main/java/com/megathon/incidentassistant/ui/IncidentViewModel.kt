@@ -11,6 +11,7 @@ import com.megathon.incidentassistant.AppContainer
 import com.megathon.incidentassistant.IncidentApp
 import com.megathon.incidentassistant.R
 import com.megathon.incidentassistant.ai.LlmStatus
+import com.megathon.incidentassistant.ai.NoSpeechException
 import com.megathon.incidentassistant.form.FieldStatus
 import com.megathon.incidentassistant.form.FieldType
 import com.megathon.incidentassistant.form.FieldValue
@@ -61,6 +62,9 @@ data class UiState(
     val submittedId: String? = null,
     /** On-device LLM load state, shown under the controls. */
     val llmStatus: String = "",
+    /** LLM warm-up result for the "ON-DEVICE AI" badge. */
+    val llmReady: Boolean = false,
+    val llmFailed: Boolean = false,
 ) {
     fun field(fieldId: String): FormField? = schema.field(fieldId)
 
@@ -107,6 +111,12 @@ class IncidentViewModel(
     /** Watches the ASR backend's end-of-speech signal (VAD closed the utterance). */
     private var autoStopJob: Job? = null
 
+    /** Consecutive turns where nothing was heard; reset by a successful turn. */
+    private var noSpeechStreak = 0
+
+    /** Widget tap: start listening as soon as the form is ready (Siri-style entry). */
+    @Volatile private var pendingAutoListen = false
+
     private val clockFormat = DateTimeFormatter.ofPattern("HH:mm")
 
     init {
@@ -120,9 +130,18 @@ class IncidentViewModel(
             safePrepare("tts") { container.synthesizer.prepare() }
             safePrepare("asr") { container.speechToText.prepare() }
             safePrepare("llm") { container.llm.prepare() }
+            maybeStartPendingAutoListen()
         }
         viewModelScope.launch {
-            container.llm.status.collect { status -> _ui.update { it.copy(llmStatus = describe(status)) } }
+            container.llm.status.collect { status ->
+                _ui.update {
+                    it.copy(
+                        llmStatus = describe(status),
+                        llmReady = status is LlmStatus.Ready,
+                        llmFailed = status is LlmStatus.Failed,
+                    )
+                }
+            }
         }
         viewModelScope.launch {
             // Hands-free loop: the assistant finished speaking its reply → re-open the mic.
@@ -160,6 +179,26 @@ class IncidentViewModel(
             )
         }
         pushWidget(str(R.string.widget_status_ready))
+        maybeStartPendingAutoListen()
+    }
+
+    /**
+     * Home-screen widget entry: the user tapped "speak". Listen immediately once the form
+     * is in — no extra tap, like Siri/Gemini.
+     */
+    fun onWidgetLaunch() {
+        pendingAutoListen = true
+        maybeStartPendingAutoListen()
+    }
+
+    private fun maybeStartPendingAutoListen() {
+        if (!pendingAutoListen) return
+        if (_ui.value.loadingForm) return // retried when the form finishes loading
+        pendingAutoListen = false
+        val state = _ui.value
+        if (state.step == Step.CAPTURE && !state.processing && !state.listening) {
+            onStartRecording()
+        }
     }
 
     /** Re-fetch the form definition from the server (starts a fresh draft). */
@@ -217,10 +256,7 @@ class IncidentViewModel(
             try {
                 val trimmed = container.speechToText.stopListening().trim()
                 if (trimmed.isEmpty()) {
-                    _ui.update {
-                        it.copy(transcript = "", transcriptReady = true, status = str(R.string.rec_empty))
-                    }
-                    pushWidget(str(R.string.widget_status_ready))
+                    reprompt()
                 } else {
                     // Just-in-time: the transcript goes straight into the extraction pipeline.
                     // It stays on screen while the model works, and the reply comes back as
@@ -237,9 +273,31 @@ class IncidentViewModel(
                 }
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: NoSpeechException) {
+                reprompt()
             } catch (e: Exception) {
                 fail()
             }
+        }
+    }
+
+    /**
+     * Nothing was heard. If a question is pending, speak it again and keep the hands-free
+     * loop alive (its TTS completion re-opens the mic); after a couple of misses, stop and
+     * let the user tap Start. A successful turn resets the counter.
+     */
+    private fun reprompt() {
+        val question = _ui.value.followUpQuestion
+        if (question != null && noSpeechStreak < MAX_NO_SPEECH_REPROMPTS) {
+            noSpeechStreak++
+            _ui.update { it.copy(transcript = "", transcriptReady = false, status = question) }
+            speakPrompt(question)
+        } else {
+            noSpeechStreak = 0
+            _ui.update {
+                it.copy(transcript = "", transcriptReady = true, status = str(R.string.rec_empty))
+            }
+            pushWidget(str(R.string.widget_status_ready))
         }
     }
 
@@ -281,6 +339,7 @@ class IncidentViewModel(
     /** One full turn through the session; stale replies (draft reset meanwhile) are dropped. */
     private suspend fun process(text: String) {
         _ui.update { it.copy(transcript = text, processing = true) }
+        noSpeechStreak = 0
         val current = session
         val reply = current.onUtterance(text)
         if (current !== session) return
@@ -520,6 +579,9 @@ class IncidentViewModel(
 
         /** Speaker drain time before the hands-free loop re-opens the mic. */
         const val AUTO_LISTEN_SETTLE_MS = 400L
+
+        /** Re-asks for the pending question at most this many times before going quiet. */
+        const val MAX_NO_SPEECH_REPROMPTS = 2
     }
 }
 

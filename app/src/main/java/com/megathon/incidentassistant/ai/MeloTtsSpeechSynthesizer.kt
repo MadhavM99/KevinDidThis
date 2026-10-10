@@ -53,6 +53,10 @@ class MeloTtsSpeechSynthesizer(context: Context) : SpeechSynthesizer {
     /** A failed init is not retried: repeated native init attempts can crash the process. */
     @Volatile private var initFailed = false
 
+    /** Frames (not bytes) written to the current track, for the drain-before-release wait. */
+    @Volatile private var framesWritten = 0L
+    @Volatile private var bytesPerFrame = 2
+
     /** Emits when a reply finished playing, for the hands-free loop. */
     private val _utteranceFinished = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     override val utteranceFinished: Flow<Unit> = _utteranceFinished
@@ -153,6 +157,8 @@ class MeloTtsSpeechSynthesizer(context: Context) : SpeechSynthesizer {
 
         override fun onStart(sampleRateInHz: Int, audioFormat: Int, channelCount: Int) {
             Log.d(TAG, "onStart rate=$sampleRateInHz fmt=$audioFormat ch=$channelCount")
+            framesWritten = 0L
+            bytesPerFrame = 2 * maxOf(1, channelCount) // 16-bit PCM
             val channelMask = if (channelCount >= 2) AudioFormat.CHANNEL_OUT_STEREO
                               else AudioFormat.CHANNEL_OUT_MONO
             val minBuf = AudioTrack.getMinBufferSize(
@@ -185,19 +191,28 @@ class MeloTtsSpeechSynthesizer(context: Context) : SpeechSynthesizer {
         override fun onAudioAvailable(buff: ByteArray, offset: Int, size: Int) {
             if (!speaking) return
             val t = track ?: return
-            t.write(buff, offset, size, AudioTrack.WRITE_BLOCKING)
+            val written = t.write(buff, offset, size, AudioTrack.WRITE_BLOCKING)
+            if (written > 0) framesWritten += written / bytesPerFrame
         }
 
         override fun onDone() {
             Log.d(TAG, "onDone")
-            releaseTrack()
-            _utteranceFinished.tryEmit(Unit)
+            // Don't release here: the NPU synthesises much faster than real time, so most
+            // of the PCM is still buffered. Wait for playback, then release.
+            val t = track
+            val frames = framesWritten
+            worker.post {
+                drainAndRelease(t, frames)
+                if (speaking) _utteranceFinished.tryEmit(Unit)
+            }
         }
 
         override fun onError(errorCode: Int) {
             Log.e(TAG, "tts error $errorCode")
-            releaseTrack()
-            _utteranceFinished.tryEmit(Unit) // don't strand the loop on a failed reply
+            worker.post {
+                releaseTrack()
+                _utteranceFinished.tryEmit(Unit) // don't strand the loop on a failed reply
+            }
         }
 
         override fun onPerformanceResult(
@@ -217,9 +232,36 @@ class MeloTtsSpeechSynthesizer(context: Context) : SpeechSynthesizer {
         track = null
     }
 
+    private fun releaseTrack(t: AudioTrack?) {
+        runCatching {
+            t?.stop()
+            t?.release()
+        }
+        if (track === t) track = null
+    }
+
+    /**
+     * Waits for the AudioTrack play-head to reach the last written frame, then releases.
+     * `speaking` is cleared by [stop], so a user interrupt ends the wait promptly.
+     */
+    private fun drainAndRelease(t: AudioTrack?, frames: Long) {
+        if (t == null) return
+        val startedAt = System.currentTimeMillis()
+        val deadline = startedAt + MAX_DRAIN_MS
+        while (speaking && System.currentTimeMillis() < deadline) {
+            val played = runCatching { t.playbackHeadPosition.toLong() }.getOrDefault(frames)
+            if (played >= frames) break
+            Thread.sleep(DRAIN_POLL_MS)
+        }
+        releaseTrack(t)
+        Log.d(TAG, "playback drained in ${System.currentTimeMillis() - startedAt}ms ($frames frames)")
+    }
+
     private companion object {
         const val TAG = "MeloTTS"
         const val AUDIO_ENCODING_LINEAR16 = "0" // see TTS.AUDIO_ENCODING + guide §3.5
+        const val DRAIN_POLL_MS = 20L
+        const val MAX_DRAIN_MS = 60_000L // safety cap; real replies are a few seconds
     }
 }
 
