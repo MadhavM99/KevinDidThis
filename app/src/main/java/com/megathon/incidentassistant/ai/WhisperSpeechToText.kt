@@ -65,6 +65,12 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
     private var lastError: Int? = null
     private var ready = false
 
+    /** Serialises start/stop so two sessions can never interleave their mic streams. */
+    private val sessionMutex = Mutex()
+
+    /** True while a `start()` session is open and not yet closed by the SDK. */
+    @Volatile private var sessionActive = false
+
     /** Serialises [prepare]; the native engine must be created exactly once per process. */
     private val initMutex = Mutex()
     private var initDone = false
@@ -100,17 +106,35 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
         }
     }
 
-    override suspend fun startListening() {
+    override suspend fun startListening() = sessionMutex.withLock {
         resetUtterance()
         lastError = null
         val w = whisper ?: error("Whisper SDK not initialised (model files missing?)")
 
+        // The SDK closes every session with stop() and a new start() while the previous
+        // session is still open is silently ignored (listening UI, no transcription —
+        // seen with successive questions). The QIDK sample calls stop() from onFinished;
+        // this guard also covers forced stops and flushes that timed out.
+        if (sessionActive) {
+            Log.d(TAG, "closing previous session before restart")
+            runCatching { w.stop() }
+        }
+
         val mic = MicInputStream().also { it.start() }
         audio = mic
-        withContext(Dispatchers.Main) { w.start(mic) }
+        sessionActive = true
+        try {
+            withContext(Dispatchers.Main) { w.start(mic) }
+            Log.d(TAG, "whisper.start ok")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "whisper.start failed: ${e.message}")
+            sessionActive = false
+        }
     }
 
-    override suspend fun stopListening(): String {
+    override suspend fun stopListening(): String = sessionMutex.withLock {
         val w = whisper ?: throw IllegalStateException("ASR unavailable")
 
         // Let the VAD see the end of the utterance: swap mic audio for silence and wait for
@@ -127,12 +151,13 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
 
         audio?.release()
         audio = null
+        sessionActive = false
 
         val text = finalText.toString().trim()
         if (lastError == WhisperResponseListener.NO_SPEECH_TIMEOUT && text.isEmpty()) {
             throw NoSpeechException("no speech detected")
         }
-        return text
+        text
     }
 
     override fun release() {
@@ -192,6 +217,10 @@ class WhisperSpeechToText(context: Context) : SpeechToText {
             Log.d(TAG, "onFinished")
             if (!finished.isCompleted) finished.complete(Unit)
             completed.tryEmit(Unit) // single-shot: the pipeline may now stop + process
+            // Sample parity (Whisper_ASR.java): the SDK expects stop() after a finished
+            // session, otherwise the next start() is ignored. Safe after flush.
+            runCatching { whisper?.stop() }
+            sessionActive = false
         }
     }
 
