@@ -1,6 +1,9 @@
 package com.megathon.incidentassistant
 
 import com.megathon.incidentassistant.ai.LlmException
+import com.megathon.incidentassistant.data.FormReadingStore
+import com.megathon.incidentassistant.form.FormField
+import com.megathon.incidentassistant.form.FormSchema
 import com.megathon.incidentassistant.form.HtmlFormParser
 import com.megathon.incidentassistant.session.ExtractionEngine
 import com.megathon.incidentassistant.session.FormInterpreter
@@ -11,6 +14,7 @@ import com.megathon.incidentassistant.session.UserIdentity
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -131,6 +135,39 @@ class FormInterpreterTest {
     fun anyFailureKeepsTheFormUsable() = runBlocking {
         assertEquals(userForm, FormInterpreter(ScriptedLlm { _, _ -> throw LlmException("not loaded") }).interpret(userForm))
         assertEquals(userForm, FormInterpreter(ScriptedLlm { _, _ -> delay(5_000); "" }, timeoutMs = 50).interpret(userForm))
+    }
+
+    @Test
+    fun aSavedReadingIsReusedAcrossLaunchesUntilTheFormChanges() = runBlocking {
+        val saved = mutableMapOf<String, FormSchema>()
+        val store = object : FormInterpreter.Store {
+            override fun load(key: String) = saved[key]
+            override fun save(key: String, form: FormSchema) { saved[key] = form }
+        }
+        val first = FormInterpreter(ScriptedLlm.of(modelReading), store = store).interpret(userForm)
+
+        val nextLaunch = ScriptedLlm.of()
+        val reader = FormInterpreter(nextLaunch, store = store)
+        assertTrue(reader.isRead(userForm))
+        val again = reader.interpret(userForm)
+        assertEquals(0, nextLaunch.calls) // no model run at startup
+        assertEquals(first.fields, again.fields)
+        assertEquals(userForm.sourceHtml, again.sourceHtml) // the page itself is not stored
+
+        val changed = userForm.copy(fields = userForm.fields + FormField(id = "extra", label = "Extra"))
+        assertFalse(reader.isRead(changed)) // a changed form is read again
+        Unit
+    }
+
+    @Test
+    fun aReadingSurvivesTheFileRoundTrip() = runBlocking {
+        val dir = java.nio.file.Files.createTempDirectory("readings").toFile()
+        val first = FormInterpreter(ScriptedLlm.of(modelReading), store = FormReadingStore(dir)).interpret(userForm)
+        val again = FormInterpreter(ScriptedLlm.of(), store = FormReadingStore(dir)).interpret(userForm)
+        assertEquals(first, again)
+        assertEquals(1, dir.listFiles()!!.size)
+        dir.deleteRecursively()
+        Unit
     }
 
     @Test

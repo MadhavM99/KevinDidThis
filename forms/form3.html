@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Incident &amp; Risk Assessment Report</title>
+  <!--
+    HTML + CSS + JS. Fully offline: styles and script are inline — no CDN, fonts or images.
+    The script only helps the person filling it in (live risk score, "Now" button, character
+    counters, a note when the hazard is still present); every field is plain HTML and the
+    form works with scripts off.
+  -->
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: #f6f4ee;
+      color: #26231c;
+    }
+    .masthead {
+      padding: 22px 18px 18px;
+      background: #3b3a2f;
+      color: #f7f3e3;
+    }
+    .masthead h1 { margin: 0; font-size: 1.4rem; }
+    .masthead p { margin: 6px 0 0; color: #d8d2bb; }
+    form { max-width: 740px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
+    .panel {
+      margin: 0;
+      padding: 14px 16px 16px;
+      border: 1px solid #e0dacb;
+      border-radius: 14px;
+      background: #fffdf7;
+    }
+    .panel > legend { padding: 0 6px; font-weight: 800; color: #6b5d1f; }
+    .panel .panel { border: 0; padding: 0; margin-top: 12px; background: none; }
+    .panel .panel > legend { padding: 0; font-weight: 600; color: inherit; }
+    .row { display: grid; gap: 6px; margin-top: 12px; }
+    .cols { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+    label { font-weight: 600; }
+    input, select, textarea {
+      width: 100%;
+      padding: 10px;
+      font: inherit;
+      border: 1px solid #d6cfbc;
+      border-radius: 9px;
+      background: #fff;
+    }
+    textarea { min-height: 86px; }
+    .opts { display: grid; gap: 6px; margin-top: 6px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+    .opts label, .flag { display: flex; align-items: center; gap: 8px; font-weight: 400; }
+    .opts input, .flag input { width: auto; }
+    .flag { margin-top: 12px; }
+    .inline { display: flex; gap: 8px; }
+    .inline button { flex: none; }
+    .score {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 14px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: #efe9d6;
+      font-weight: 700;
+    }
+    .score[data-level=low] { background: #dcefd9; }
+    .score[data-level=medium] { background: #fbeec2; }
+    .score[data-level=high] { background: #f9d7c4; }
+    .score[data-level=extreme] { background: #f2b8b5; }
+    .count { justify-self: end; font-size: .8rem; color: #85795a; }
+    .warn { display: none; margin-top: 8px; padding: 8px 12px; border-radius: 8px; background: #fde2df; color: #8a1c12; }
+    .warn.show { display: block; }
+    .req { color: #b03a2e; }
+    button {
+      padding: 13px 16px;
+      font: inherit;
+      font-weight: 700;
+      border: 0;
+      border-radius: 10px;
+      color: #fff;
+      background: #6b5d1f;
+    }
+    button.light { color: #6b5d1f; background: #ece5cf; }
+  </style>
+</head>
+<body>
+  <div class="masthead">
+    <h1>Incident &amp; Risk Assessment Report</h1>
+    <p>Record what happened and how likely it is to happen again, so the right fix gets priority.</p>
+  </div>
+
+  <form id="incident_risk_report" data-version="1.0" action="/api/v1/reports" method="post">
+
+    <fieldset class="panel" id="event">
+      <legend>Event</legend>
+
+      <fieldset class="panel">
+        <legend>What are you reporting? <span class="req">*</span></legend>
+        <div class="opts">
+          <label><input type="radio" name="report_kind" value="incident" required> An incident that happened</label>
+          <label><input type="radio" name="report_kind" value="near_miss"> A near miss</label>
+          <label><input type="radio" name="report_kind" value="unsafe_condition"> An unsafe condition</label>
+          <label><input type="radio" name="report_kind" value="unsafe_act"> An unsafe act</label>
+        </div>
+      </fieldset>
+
+      <div class="row">
+        <label for="incident_datetime">When did it happen? <span class="req">*</span></label>
+        <div class="inline">
+          <input id="incident_datetime" name="incident_datetime" type="datetime-local" required>
+          <button type="button" class="light" id="now">Now</button>
+        </div>
+      </div>
+
+      <div class="row">
+        <label for="area">Area <span class="req">*</span></label>
+        <input id="area" name="area" type="text" required placeholder="Building, floor, room, yard or route">
+      </div>
+
+      <div class="row">
+        <label for="task_being_done">Task or activity at the time</label>
+        <input id="task_being_done" name="task_being_done" type="text"
+               placeholder="e.g. moving stock, cleaning, maintenance, walking to the car park">
+      </div>
+
+      <div class="row">
+        <label for="what_happened">What happened? <span class="req">*</span></label>
+        <textarea id="what_happened" name="what_happened" required maxlength="1200"></textarea>
+        <span class="count" data-for="what_happened"></span>
+      </div>
+    </fieldset>
+
+    <fieldset class="panel" id="risk">
+      <legend>Risk</legend>
+
+      <fieldset class="panel">
+        <legend>How likely is it to happen again? <span class="req">*</span></legend>
+        <div class="opts">
+          <label><input type="radio" name="likelihood" value="1" required> Rare</label>
+          <label><input type="radio" name="likelihood" value="2"> Unlikely</label>
+          <label><input type="radio" name="likelihood" value="3"> Possible</label>
+          <label><input type="radio" name="likelihood" value="4"> Likely</label>
+          <label><input type="radio" name="likelihood" value="5"> Almost certain</label>
+        </div>
+      </fieldset>
+
+      <div class="row">
+        <label for="consequence">Worst realistic consequence <span class="req">*</span></label>
+        <select id="consequence" name="consequence" required>
+          <option value="">Select…</option>
+          <option value="1">Insignificant — no injury or damage</option>
+          <option value="2">Minor — first aid, small damage</option>
+          <option value="3">Moderate — medical treatment, lost time</option>
+          <option value="4">Major — serious injury, major damage</option>
+          <option value="5">Catastrophic — fatality or site shutdown</option>
+        </select>
+      </div>
+
+      <div class="score" id="score" data-level="none" aria-live="polite">
+        <span>Risk score</span><output id="score_value">—</output>
+      </div>
+
+      <fieldset class="panel">
+        <legend>Contributing factors</legend>
+        <div class="opts">
+          <label><input type="checkbox" name="contributing_factors" value="procedure_not_followed"> Procedure not followed</label>
+          <label><input type="checkbox" name="contributing_factors" value="no_procedure"> No procedure exists</label>
+          <label><input type="checkbox" name="contributing_factors" value="housekeeping"> Poor housekeeping</label>
+          <label><input type="checkbox" name="contributing_factors" value="equipment_defect"> Equipment defect</label>
+          <label><input type="checkbox" name="contributing_factors" value="training"> Lack of training</label>
+          <label><input type="checkbox" name="contributing_factors" value="fatigue"> Fatigue or time pressure</label>
+          <label><input type="checkbox" name="contributing_factors" value="lighting"> Poor lighting</label>
+          <label><input type="checkbox" name="contributing_factors" value="weather"> Weather</label>
+        </div>
+      </fieldset>
+
+      <fieldset class="panel">
+        <legend>Was the right protective equipment worn?</legend>
+        <div class="opts">
+          <label><input type="radio" name="ppe_worn" value="yes"> Yes</label>
+          <label><input type="radio" name="ppe_worn" value="no"> No</label>
+          <label><input type="radio" name="ppe_worn" value="not_required"> Not required for this task</label>
+        </div>
+      </fieldset>
+
+      <fieldset class="panel">
+        <legend>Is the hazard still there? <span class="req">*</span></legend>
+        <div class="opts">
+          <label><input type="radio" name="hazard_still_present" value="yes" required> Yes</label>
+          <label><input type="radio" name="hazard_still_present" value="no"> No, it has been removed</label>
+          <label><input type="radio" name="hazard_still_present" value="unsure"> Not sure</label>
+        </div>
+      </fieldset>
+      <p class="warn" id="hazard_warning">Keep people away and tell your supervisor right now.</p>
+
+      <label class="flag"><input type="checkbox" id="area_isolated" name="area_isolated"> The area has been cordoned off</label>
+    </fieldset>
+
+    <fieldset class="panel" id="fix">
+      <legend>Fixing it</legend>
+      <div class="row">
+        <label for="corrective_action">Corrective action proposed</label>
+        <textarea id="corrective_action" name="corrective_action" maxlength="800"></textarea>
+        <span class="count" data-for="corrective_action"></span>
+      </div>
+      <div class="cols">
+        <div class="row">
+          <label for="action_owner">Who should own the fix?</label>
+          <input id="action_owner" name="action_owner" type="text">
+        </div>
+        <div class="row">
+          <label for="target_date">Fix needed by</label>
+          <input id="target_date" name="target_date" type="date">
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset class="panel" id="you">
+      <legend>About you</legend>
+      <div class="cols">
+        <div class="row">
+          <label for="reported_by">Your name <span class="req">*</span></label>
+          <input id="reported_by" name="reported_by" type="text" required autocomplete="name">
+        </div>
+        <div class="row">
+          <label for="reporter_role">You are</label>
+          <select id="reporter_role" name="reporter_role">
+            <option value="">Select…</option>
+            <option value="employee">Employee</option>
+            <option value="supervisor">Supervisor or manager</option>
+            <option value="contractor">Contractor</option>
+            <option value="visitor">Visitor</option>
+          </select>
+        </div>
+      </div>
+    </fieldset>
+
+    <button type="submit">Submit report</button>
+  </form>
+
+  <script>
+    (function () {
+      function $(id) { return document.getElementById(id); }
+
+      // "Now" fills the current local date and time.
+      $('now').addEventListener('click', function () {
+        var d = new Date();
+        d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+        $('incident_datetime').value = d.toISOString().slice(0, 16);
+      });
+
+      // Live risk score = likelihood × consequence (1–25).
+      function checked(name) {
+        var el = document.querySelector('input[name="' + name + '"]:checked');
+        return el ? Number(el.value) : 0;
+      }
+      function score() {
+        var l = checked('likelihood');
+        var c = Number($('consequence').value || 0);
+        var box = $('score');
+        if (!l || !c) { $('score_value').textContent = '—'; box.dataset.level = 'none'; return; }
+        var s = l * c;
+        $('score_value').textContent = s + ' / 25';
+        box.dataset.level = s >= 15 ? 'extreme' : s >= 10 ? 'high' : s >= 5 ? 'medium' : 'low';
+      }
+      document.querySelectorAll('input[name=likelihood]').forEach(function (r) { r.addEventListener('change', score); });
+      $('consequence').addEventListener('change', score);
+      score();
+
+      // Warn while the hazard is still present.
+      function hazard() {
+        var el = document.querySelector('input[name=hazard_still_present]:checked');
+        $('hazard_warning').classList.toggle('show', !!el && el.value === 'yes');
+      }
+      document.querySelectorAll('input[name=hazard_still_present]').forEach(function (r) { r.addEventListener('change', hazard); });
+      hazard();
+
+      // Character counters.
+      document.querySelectorAll('.count').forEach(function (counter) {
+        var box = $(counter.getAttribute('data-for'));
+        function update() { counter.textContent = box.value.length + ' / ' + box.maxLength; }
+        box.addEventListener('input', update);
+        update();
+      });
+    })();
+  </script>
+</body>
+</html>

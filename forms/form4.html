@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Incident Log &amp; Evidence Form</title>
+  <!--
+    HTML + CSS + JS. Fully offline: styles and script are inline — no CDN, fonts or images.
+    The script turns the three sections into a step-by-step wizard (with checks before moving
+    on) and shows how long the incident lasted. Without scripts all sections show at once;
+    the fields themselves are plain HTML.
+  -->
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: #eef6f7;
+      color: #14282c;
+    }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 18px 16px 40px; }
+    h1 { margin: 0; font-size: 1.45rem; }
+    .sub { margin: 6px 0 14px; color: #4d6a70; }
+    .progress { display: flex; gap: 6px; margin-bottom: 14px; }
+    .progress span {
+      flex: 1;
+      padding: 6px 0;
+      text-align: center;
+      font-size: .8rem;
+      font-weight: 700;
+      border-radius: 8px;
+      background: #d5e6e8;
+      color: #4d6a70;
+    }
+    .progress span.on { background: #0f6e78; color: #fff; }
+    .step {
+      margin: 0 0 14px;
+      padding: 16px;
+      border: 1px solid #c7dde0;
+      border-radius: 16px;
+      background: #fff;
+    }
+    .step > legend { padding: 0 6px; font-weight: 800; color: #0f6e78; }
+    .step fieldset { margin: 12px 0 0; padding: 0; border: 0; }
+    .step fieldset > legend { font-weight: 600; }
+    .js .step:not(.current) { display: none; }
+    .item { display: grid; gap: 6px; margin-top: 12px; }
+    .pair { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+    label { font-weight: 600; }
+    input, select, textarea {
+      width: 100%;
+      padding: 10px 12px;
+      font: inherit;
+      border: 1px solid #b8d0d4;
+      border-radius: 10px;
+      background: #fafdfd;
+    }
+    textarea { min-height: 96px; }
+    .choice { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 6px; }
+    .choice label, .check { display: inline-flex; align-items: center; gap: 6px; font-weight: 400; }
+    .choice input, .check input { width: auto; }
+    .check { margin-top: 12px; }
+    .duration { margin-top: 8px; font-size: .9rem; color: #0f6e78; min-height: 1.2em; }
+    .hint { font-size: .85rem; color: #5b777c; }
+    .star { color: #c0392b; }
+    .nav { display: none; gap: 10px; }
+    .js .nav { display: flex; }
+    .nav button { flex: 1; }
+    button {
+      padding: 13px;
+      font: inherit;
+      font-weight: 700;
+      border: 0;
+      border-radius: 12px;
+      color: #fff;
+      background: #0f6e78;
+    }
+    button.back { color: #0f6e78; background: #d5e6e8; }
+    .js .submit-row { display: none; }
+    .js .step.last.current ~ .submit-row { display: block; }
+    .submit-row button { width: 100%; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Incident Log &amp; Evidence Form</h1>
+  <p class="sub">Log the timeline of an incident and the evidence gathered, for follow-up and investigation.</p>
+  <div class="progress" aria-hidden="true">
+    <span>1 · Timeline</span><span>2 · Details</span><span>3 · Follow-up</span>
+  </div>
+
+  <form id="incident_log" data-version="1.0" action="/api/v1/reports" method="post">
+
+    <fieldset class="step" id="step_timeline">
+      <legend>Timeline and place</legend>
+      <div class="pair">
+        <div class="item">
+          <label for="started_at">Started <span class="star">*</span></label>
+          <input id="started_at" name="started_at" type="datetime-local" required>
+        </div>
+        <div class="item">
+          <label for="ended_at">Ended or brought under control</label>
+          <input id="ended_at" name="ended_at" type="datetime-local">
+        </div>
+      </div>
+      <p class="duration" id="duration" aria-live="polite"></p>
+
+      <fieldset>
+        <legend>Current status <span class="star">*</span></legend>
+        <div class="choice">
+          <label><input type="radio" name="event_status" value="ongoing" required> Still ongoing</label>
+          <label><input type="radio" name="event_status" value="contained"> Contained</label>
+          <label><input type="radio" name="event_status" value="resolved"> Fully resolved</label>
+        </div>
+      </fieldset>
+
+      <div class="pair">
+        <div class="item">
+          <label for="building">Building <span class="star">*</span></label>
+          <input id="building" name="building" type="text" required>
+        </div>
+        <div class="item">
+          <label for="floor">Floor or level</label>
+          <input id="floor" name="floor" type="text">
+        </div>
+      </div>
+      <div class="item">
+        <label for="exact_spot">Exact spot</label>
+        <input id="exact_spot" name="exact_spot" type="text" placeholder="Room, corridor, machine, desk or bay">
+      </div>
+      <div class="item">
+        <label for="discovered_by">Who noticed it first?</label>
+        <select id="discovered_by" name="discovered_by">
+          <option value="">Select…</option>
+          <option value="me">I did</option>
+          <option value="colleague">A colleague</option>
+          <option value="customer">A customer or visitor</option>
+          <option value="alarm">An alarm or sensor</option>
+          <option value="patrol">Security patrol</option>
+        </select>
+      </div>
+    </fieldset>
+
+    <fieldset class="step" id="step_details">
+      <legend>What happened</legend>
+      <div class="item">
+        <label for="narrative">Account of the incident <span class="star">*</span></label>
+        <textarea id="narrative" name="narrative" required aria-describedby="narrative_hint"></textarea>
+        <span class="hint" id="narrative_hint">In order: what led up to it, what happened, and what happened right after.</span>
+      </div>
+      <div class="pair">
+        <div class="item">
+          <label for="injured_count">How many people were hurt?</label>
+          <input id="injured_count" name="injured_count" type="number" min="0" step="1">
+        </div>
+        <div class="item">
+          <label for="injured_names">Names of those hurt</label>
+          <input id="injured_names" name="injured_names" type="text" multiple>
+        </div>
+      </div>
+      <div class="item">
+        <label for="machinery_involved">Machines, tools or vehicles involved</label>
+        <input id="machinery_involved" name="machinery_involved" type="text" multiple>
+      </div>
+      <fieldset>
+        <legend>Conditions at the time</legend>
+        <div class="choice">
+          <label><input type="checkbox" name="conditions" value="wet_floor"> Wet or slippery floor</label>
+          <label><input type="checkbox" name="conditions" value="poor_lighting"> Poor lighting</label>
+          <label><input type="checkbox" name="conditions" value="heat"> Extreme heat</label>
+          <label><input type="checkbox" name="conditions" value="noise"> Loud noise</label>
+          <label><input type="checkbox" name="conditions" value="crowding"> Crowding</label>
+          <label><input type="checkbox" name="conditions" value="rain_wind"> Rain or strong wind</label>
+        </div>
+      </fieldset>
+    </fieldset>
+
+    <fieldset class="step last" id="step_followup">
+      <legend>Evidence and follow-up</legend>
+      <fieldset>
+        <legend>Evidence collected</legend>
+        <div class="choice">
+          <label><input type="checkbox" name="evidence" value="photos"> Photos</label>
+          <label><input type="checkbox" name="evidence" value="cctv"> CCTV footage</label>
+          <label><input type="checkbox" name="evidence" value="statements"> Witness statements</label>
+          <label><input type="checkbox" name="evidence" value="samples"> Samples or debris</label>
+          <label><input type="checkbox" name="evidence" value="documents"> Logs or documents</label>
+        </div>
+      </fieldset>
+      <div class="pair">
+        <div class="item">
+          <label for="priority">Priority <span class="star">*</span></label>
+          <select id="priority" name="priority" required>
+            <option value="">Select…</option>
+            <option value="p1">P1 — immediate</option>
+            <option value="p2">P2 — within 24 hours</option>
+            <option value="p3">P3 — within a week</option>
+            <option value="p4">P4 — when possible</option>
+          </select>
+        </div>
+        <div class="item">
+          <label for="police_case_number">Police case number</label>
+          <input id="police_case_number" name="police_case_number" type="text">
+        </div>
+      </div>
+      <label class="check"><input type="checkbox" id="insurance_claim" name="insurance_claim"> An insurance claim will be needed</label>
+      <div class="pair">
+        <div class="item">
+          <label for="previous_occurrence">If it happened before, in which month?</label>
+          <input id="previous_occurrence" name="previous_occurrence" type="month">
+        </div>
+        <div class="item">
+          <label for="review_week">Week for the follow-up review</label>
+          <input id="review_week" name="review_week" type="week">
+        </div>
+      </div>
+      <div class="item">
+        <label for="prevention_idea">How could this be prevented?</label>
+        <textarea id="prevention_idea" name="prevention_idea"></textarea>
+      </div>
+      <div class="pair">
+        <div class="item">
+          <label for="submitter_name">Your name <span class="star">*</span></label>
+          <input id="submitter_name" name="submitter_name" type="text" required autocomplete="name">
+        </div>
+        <div class="item">
+          <label for="submitter_email">Your email</label>
+          <input id="submitter_email" name="submitter_email" type="email" autocomplete="email">
+        </div>
+      </div>
+      <div class="item">
+        <label for="follow_up_phone">Phone for follow-up questions</label>
+        <input id="follow_up_phone" name="follow_up_phone" type="tel" autocomplete="tel">
+      </div>
+    </fieldset>
+
+    <div class="nav">
+      <button type="button" class="back" id="back">Back</button>
+      <button type="button" id="next">Next</button>
+    </div>
+    <div class="submit-row">
+      <button type="submit">Submit incident log</button>
+    </div>
+  </form>
+</div>
+
+<script>
+  (function () {
+    var form = document.getElementById('incident_log');
+    var steps = form.querySelectorAll('.step');
+    var dots = document.querySelectorAll('.progress span');
+    var current = 0;
+    document.documentElement.classList.add('js');
+
+    function show(i) {
+      current = Math.max(0, Math.min(steps.length - 1, i));
+      steps.forEach(function (s, n) { s.classList.toggle('current', n === current); });
+      dots.forEach(function (d, n) { d.classList.toggle('on', n <= current); });
+      document.getElementById('back').style.visibility = current === 0 ? 'hidden' : 'visible';
+      document.getElementById('next').style.display = current === steps.length - 1 ? 'none' : '';
+    }
+
+    // Moving on checks the mandatory fields of the current step only.
+    document.getElementById('next').addEventListener('click', function () {
+      var fields = steps[current].querySelectorAll('input, select, textarea');
+      for (var i = 0; i < fields.length; i++) {
+        if (!fields[i].checkValidity()) { fields[i].reportValidity(); return; }
+      }
+      show(current + 1);
+    });
+    document.getElementById('back').addEventListener('click', function () { show(current - 1); });
+
+    // How long it lasted, from the two times.
+    function duration() {
+      var a = Date.parse(document.getElementById('started_at').value);
+      var b = Date.parse(document.getElementById('ended_at').value);
+      var out = document.getElementById('duration');
+      if (isNaN(a) || isNaN(b)) { out.textContent = ''; return; }
+      if (b < a) { out.textContent = 'The end is before the start — please check the times.'; return; }
+      var minutes = Math.round((b - a) / 60000);
+      out.textContent = 'Lasted ' + Math.floor(minutes / 60) + ' h ' + (minutes % 60) + ' min';
+    }
+    document.getElementById('started_at').addEventListener('change', duration);
+    document.getElementById('ended_at').addEventListener('change', duration);
+
+    show(0);
+  })();
+</script>
+</body>
+</html>

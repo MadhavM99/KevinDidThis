@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Incident Notification Form</title>
+  <!-- HTML + CSS. Fully offline: no external fonts, stylesheets, images or scripts. -->
+  <style>
+    :root {
+      --ink: #1f2430;
+      --muted: #5f6878;
+      --line: #d9dee7;
+      --paper: #ffffff;
+      --page: #f1f3f7;
+      --brand: #24477a;
+      --brand-soft: #e5ecf7;
+      --must: #c0392b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px 16px 48px;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      color: var(--ink);
+      background: var(--page);
+    }
+    .sheet {
+      max-width: 760px;
+      margin: 0 auto;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+    .sheet header { padding: 20px 22px; background: var(--brand); color: #fff; }
+    .sheet header h1 { margin: 0; font-size: 1.45rem; }
+    .sheet header p { margin: 6px 0 0; opacity: .85; font-size: .95rem; }
+    form { padding: 6px 22px 22px; }
+    fieldset { margin: 18px 0 0; padding: 0; border: 0; }
+    fieldset > legend {
+      width: 100%;
+      padding: 0 0 6px;
+      margin-bottom: 4px;
+      font-size: .78rem;
+      font-weight: 800;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--brand);
+      border-bottom: 2px solid var(--brand-soft);
+    }
+    fieldset fieldset > legend {
+      font-size: .95rem;
+      letter-spacing: 0;
+      text-transform: none;
+      color: var(--ink);
+      border: 0;
+      font-weight: 600;
+    }
+    .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+    .q { display: grid; gap: 6px; margin-top: 12px; }
+    label { font-weight: 600; font-size: .95rem; }
+    .must { color: var(--must); }
+    input, select, textarea {
+      width: 100%;
+      padding: 10px 12px;
+      font: inherit;
+      color: inherit;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fbfcfe;
+    }
+    textarea { min-height: 88px; resize: vertical; }
+    .pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+    .pills label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px;
+      font-weight: 400;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--brand-soft);
+    }
+    .pills input, .tick input { width: auto; }
+    .tick { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-weight: 400; }
+    .help { font-size: .85rem; color: var(--muted); }
+    .actions { margin-top: 22px; }
+    button {
+      width: 100%;
+      padding: 14px;
+      font: inherit;
+      font-weight: 700;
+      color: #fff;
+      background: var(--brand);
+      border: 0;
+      border-radius: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="sheet">
+    <header>
+      <h1>Incident Notification Form</h1>
+      <p>Tell us about any incident at work: what happened, who and what it affected, and who already knows.</p>
+    </header>
+
+    <form id="incident_notification" data-version="1.0" action="/api/v1/reports" method="post">
+
+      <fieldset id="basics">
+        <legend>The incident</legend>
+
+        <fieldset>
+          <legend>Category <span class="must">*</span></legend>
+          <div class="pills">
+            <label><input type="radio" name="incident_category" value="injury_illness" required> Injury or illness</label>
+            <label><input type="radio" name="incident_category" value="property_damage"> Property damage</label>
+            <label><input type="radio" name="incident_category" value="environmental"> Environmental</label>
+            <label><input type="radio" name="incident_category" value="security"> Security</label>
+            <label><input type="radio" name="incident_category" value="service_disruption"> Service disruption</label>
+            <label><input type="radio" name="incident_category" value="near_miss"> Near miss</label>
+          </div>
+        </fieldset>
+
+        <div class="grid">
+          <div class="q">
+            <label for="event_date">Date <span class="must">*</span></label>
+            <input id="event_date" name="event_date" type="date" required title="On what date did it happen?">
+          </div>
+          <div class="q">
+            <label for="event_time">Approximate time</label>
+            <input id="event_time" name="event_time" type="time" title="Roughly what time was it?">
+          </div>
+        </div>
+
+        <div class="grid">
+          <div class="q">
+            <label for="site">Site or address <span class="must">*</span></label>
+            <input id="site" name="site" type="text" required placeholder="Office, plant, store or street address">
+          </div>
+          <div class="q">
+            <label for="shift">Shift</label>
+            <select id="shift" name="shift">
+              <option value="">Select…</option>
+              <option value="morning">Morning</option>
+              <option value="afternoon">Afternoon</option>
+              <option value="night">Night</option>
+              <option value="off_hours">Outside working hours</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="q">
+          <label for="summary">Short summary <span class="must">*</span></label>
+          <textarea id="summary" name="summary" required
+                    aria-describedby="summary_help"></textarea>
+          <span class="help" id="summary_help">Two or three sentences: what happened and what it led to.</span>
+        </div>
+      </fieldset>
+
+      <fieldset id="impact">
+        <legend>Impact</legend>
+
+        <div class="grid">
+          <div class="q">
+            <label for="people_affected">Number of people affected</label>
+            <input id="people_affected" name="people_affected" type="number" min="0" step="1">
+          </div>
+          <div class="q">
+            <label for="medical_treatment">Medical treatment needed</label>
+            <select id="medical_treatment" name="medical_treatment">
+              <option value="">Select…</option>
+              <option value="none">None</option>
+              <option value="first_aid">First aid only</option>
+              <option value="doctor">Doctor or clinic visit</option>
+              <option value="hospital">Hospital admission</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid">
+          <div class="q">
+            <label for="damage_estimate">Estimated cost of damage</label>
+            <input id="damage_estimate" name="damage_estimate" type="number" min="0" step="0.01"
+                   placeholder="Amount in local currency, if known">
+          </div>
+          <div class="q">
+            <label for="downtime_hours">Downtime (hours)</label>
+            <input id="downtime_hours" name="downtime_hours" type="number" min="0" step="0.5">
+          </div>
+        </div>
+
+        <label class="tick"><input type="checkbox" id="work_stopped" name="work_stopped"> Work had to stop because of it</label>
+      </fieldset>
+
+      <fieldset id="notifications">
+        <legend>Who knows about it</legend>
+
+        <fieldset>
+          <legend>Already informed</legend>
+          <div class="pills">
+            <label><input type="checkbox" name="notified_parties" value="supervisor"> Supervisor</label>
+            <label><input type="checkbox" name="notified_parties" value="safety_officer"> Safety officer</label>
+            <label><input type="checkbox" name="notified_parties" value="security"> Security</label>
+            <label><input type="checkbox" name="notified_parties" value="facilities"> Facilities</label>
+            <label><input type="checkbox" name="notified_parties" value="hr"> HR</label>
+            <label><input type="checkbox" name="notified_parties" value="emergency_services"> Emergency services</label>
+          </div>
+        </fieldset>
+
+        <div class="q">
+          <label for="likely_cause">What do you think caused it?</label>
+          <textarea id="likely_cause" name="likely_cause"></textarea>
+        </div>
+      </fieldset>
+
+      <fieldset id="contact">
+        <legend>Your details</legend>
+        <div class="grid">
+          <div class="q">
+            <label for="reporter_name">Name <span class="must">*</span></label>
+            <input id="reporter_name" name="reporter_name" type="text" required>
+          </div>
+          <div class="q">
+            <label for="department">Department</label>
+            <select id="department" name="department">
+              <option value="">Select…</option>
+              <option value="operations">Operations</option>
+              <option value="maintenance">Maintenance</option>
+              <option value="logistics">Logistics</option>
+              <option value="office">Office / administration</option>
+              <option value="it">IT</option>
+              <option value="contractor">Contractor</option>
+            </select>
+          </div>
+        </div>
+        <div class="grid">
+          <div class="q">
+            <label for="reporter_phone">Phone</label>
+            <input id="reporter_phone" name="reporter_phone" type="tel">
+          </div>
+          <div class="q">
+            <label for="contact_email">Email</label>
+            <input id="contact_email" name="contact_email" type="email">
+          </div>
+        </div>
+      </fieldset>
+
+      <div class="actions">
+        <button type="submit">Send notification</button>
+      </div>
+    </form>
+  </div>
+</body>
+</html>

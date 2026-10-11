@@ -43,7 +43,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -324,24 +323,34 @@ private fun ReviewFieldItem(
                 }
             }
 
-            // Content: chips for enum, text field for everything else
-            if (isEnum) {
-                EnumChips(
-                    options = options,
-                    selected = value,
-                    onSelect = onChange,
-                )
-            } else {
-                val multiline = field.type == FieldType.TEXTAREA
-                OutlinedTextField(
+            // The editor that fits the field: choices, pickers, or the right keyboard.
+            when {
+                isEnum -> {
+                    EnumChips(
+                        options = options,
+                        selected = value,
+                        onSelect = onChange,
+                    )
+                    // An answer that is not one of the choices (e.g. heard by voice) stays visible.
+                    if (value.isNotBlank() && options.none { it.value.equals(value, ignoreCase = true) }) {
+                        Text(
+                            stringResource(R.string.edit_not_an_option, displayValue),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+                field.type == FieldType.DATETIME -> DateTimeEditor(field, value, onChange, isError = showError)
+                field.type == FieldType.STRING_LIST && field.options.isNotEmpty() ->
+                    MultiChoiceEditor(field.options, value, onChange)
+                else -> TextFieldEditor(
+                    field = field,
                     value = value,
-                    onValueChange = onChange,
-                    placeholder = { Text("Tap to fill in…", style = MaterialTheme.typography.bodyMedium) },
+                    onChange = onChange,
                     isError = showError,
-                    minLines = if (multiline) 3 else 1,
-                    singleLine = !multiline,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth(),
+                    multiline = field.type == FieldType.TEXTAREA,
+                    keyboard = keyboardFor(field),
+                    supporting = if (field.type == FieldType.STRING_LIST) stringResource(R.string.edit_list_hint) else null,
                 )
             }
         }
@@ -371,8 +380,10 @@ private fun SeverityChip(value: String) {
 
 @Composable
 private fun EnumChips(options: List<FieldOption>, selected: String, onSelect: (String) -> Unit) {
-    // For small option sets (≤4) use horizontal wrap chips; for larger sets fall back to radio list
-    if (options.size <= 4) {
+    // Tapping the chosen option again clears it (a choice can be taken back).
+    val select: (String) -> Unit = { v -> onSelect(if (v.equals(selected, ignoreCase = true)) "" else v) }
+    // Few short options: a row of chips; many or long ones: a radio list (no squeezed labels).
+    if (options.size <= 4 && options.all { it.label.ifBlank { it.value }.length <= 12 }) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -389,7 +400,7 @@ private fun EnumChips(options: List<FieldOption>, selected: String, onSelect: (S
                         .selectable(
                             selected = isSelected,
                             role = Role.RadioButton,
-                            onClick = { onSelect(option.value) },
+                            onClick = { select(option.value) },
                         )
                         .heightIn(min = 40.dp),
                 ) {
@@ -418,7 +429,7 @@ private fun EnumChips(options: List<FieldOption>, selected: String, onSelect: (S
                         .selectable(
                             selected = isSelected,
                             role = Role.RadioButton,
-                            onClick = { onSelect(option.value) },
+                            onClick = { select(option.value) },
                         )
                         .padding(vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,

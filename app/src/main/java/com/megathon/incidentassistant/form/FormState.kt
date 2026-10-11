@@ -38,6 +38,8 @@ object FieldNormalizer {
             FieldType.BOOLEAN -> matchBoolean(value)
             FieldType.NUMBER -> matchNumber(value)
             FieldType.STRING_LIST -> Normalization.Ok(normalizeList(value))
+            // An HTML date/time input only takes its own format (a date field "2026-10-11").
+            FieldType.DATETIME -> Normalization.Ok(if (field.input != null) FieldFormats.normalize(field, value) else value)
             else -> Normalization.Ok(value)
         }
     }

@@ -35,7 +35,8 @@ object AppConfig {
      */
     const val SERVER_BASE_URL = ""
 
-    const val DEFAULT_FORM_ID = "incident_report"
+    /** The bundled form (forms/form1.html) used when no form has been pushed to the device. */
+    const val DEFAULT_FORM_ID = "form1"
 
     /**
      * A published form page (any ordinary HTML `<form>`) to build the conversation from.

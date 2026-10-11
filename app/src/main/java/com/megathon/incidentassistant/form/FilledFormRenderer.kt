@@ -71,9 +71,13 @@ object FilledFormRenderer {
                 } else {
                     setChecked(control, norm(value) in TRUE_WORDS)
                 }
-                "datetime-local" -> control.attr("value", value.take(16)) // yyyy-MM-ddTHH:mm
-                "date" -> control.attr("value", value.take(10))
-                "time" -> control.attr("value", value.substringAfter('T').take(5))
+                // Each date/time input only shows a value in its own format (yyyy-MM-ddTHH:mm,
+                // yyyy-MM-dd, HH:mm, yyyy-MM, yyyy-Www); anything else would show up empty.
+                "datetime-local", "datetime", "date", "time", "month", "week" -> {
+                    val kind = FieldFormats.kindOf(FormField(id = control.attr("name"), input = control.attr("type").lowercase()))
+                    val formatted = FieldFormats.parse(value)?.let { FieldFormats.toInputValue(kind, it) }
+                    control.attr("value", formatted ?: value)
+                }
                 else -> control.attr("value", value)
             }
         }

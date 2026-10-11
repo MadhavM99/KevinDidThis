@@ -1,10 +1,10 @@
-// The form pages the app ships come from tools/forms/ (the same folder tools/mock_proxy.py
-// serves), copied into the assets at build time: edit or replace a page there and rebuild —
-// there is no second copy in the app sources. A page pushed to the device overrides it with
-// no rebuild at all (scripts/push-form.sh).
+// The form pages the app ships come from forms/ at the repo root, copied into the assets at
+// build time (form1.html is the default form): edit a page there and rebuild — there is no
+// second copy in the app sources. A page pushed to the device overrides it with no rebuild
+// at all (scripts/push-form.sh).
 val bundledForms = layout.buildDirectory.dir("generated/bundledForms")
 val copyBundledForms by tasks.registering(Copy::class) {
-    from(rootProject.file("tools/forms")) { include("*.html") }
+    from(rootProject.file("forms")) { include("*.html") }
     into(bundledForms.map { it.dir("forms") })
 }
 

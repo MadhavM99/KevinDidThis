@@ -6,6 +6,8 @@ import com.megathon.incidentassistant.form.FormField
 import com.megathon.incidentassistant.form.FormSchema
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.Json
+import java.security.MessageDigest
 
 /**
  * Reads a freshly loaded form once with the on-device model, so nothing about any form is
@@ -26,15 +28,37 @@ class FormInterpreter(
     private val llm: LlmBackend,
     private val timeoutMs: Long = DEFAULT_TIMEOUT_MS,
     private val log: (String) -> Unit = {},
+    /** Keeps readings across launches: a form is read by the model once, until it changes. */
+    private val store: Store? = null,
 ) {
+    /** A model reading of a form, by [keyFor]. */
+    interface Store {
+        fun load(key: String): FormSchema?
+        fun save(key: String, form: FormSchema)
+    }
+
     private val cache = mutableMapOf<FormSchema, FormSchema>()
+
+    /** Whether [interpret] can answer without running the model. */
+    fun isRead(schema: FormSchema): Boolean =
+        schema.fields.isEmpty() || schema in cache || !needsModel(schema) ||
+            store?.let { s -> runCatching { s.load(keyFor(schema)) }.getOrNull() } != null
 
     suspend fun interpret(schema: FormSchema): FormSchema {
         if (schema.fields.isEmpty()) return schema
         cache[schema]?.let { return it }
         val formMarksReporter = schema.fields.any { it.prefill in PREFILL_KINDS }
-        val needQuestions = schema.fields.any { it.question.isNullOrBlank() && it.prefill == null }
-        if (formMarksReporter && !needQuestions) return schema
+        if (!needsModel(schema)) return schema
+        val saved = store
+        val key = saved?.let { keyFor(schema) }
+        if (saved != null && key != null) {
+            runCatching { saved.load(key) }.getOrNull()?.let { reading ->
+                val result = reading.copy(sourceHtml = schema.sourceHtml)
+                log("FORM_INTERPRETED cached")
+                cache[schema] = result
+                return result
+            }
+        }
 
         val answer = try {
             withTimeoutOrNull(timeoutMs) { llm.generate(prompt(schema)) }
@@ -62,7 +86,21 @@ class FormInterpreter(
                 "reporter=${reporter.entries.joinToString { "${it.value}=${it.key}" }.ifEmpty { "none" }}",
         )
         cache[schema] = result
+        if (saved != null && key != null) runCatching { saved.save(key, result) }
         return result
+    }
+
+    private fun needsModel(schema: FormSchema): Boolean {
+        val formMarksReporter = schema.fields.any { it.prefill in PREFILL_KINDS }
+        val needQuestions = schema.fields.any { it.question.isNullOrBlank() && it.prefill == null }
+        return !(formMarksReporter && !needQuestions)
+    }
+
+    /** Same fields (and same prompt) → same reading; page styling changes don't matter. */
+    internal fun keyFor(schema: FormSchema): String {
+        val canonical = KEY_JSON.encodeToString(FormSchema.serializer(), schema)
+        val digest = MessageDigest.getInstance("SHA-256").digest("$READING_VERSION\n$canonical".toByteArray())
+        return digest.joinToString("") { "%02x".format(it) }
     }
 
     internal fun prompt(schema: FormSchema): String = buildString {
@@ -123,6 +161,10 @@ class FormInterpreter(
 
     companion object {
         const val DEFAULT_TIMEOUT_MS = 45_000L
+
+        /** Bump when the prompt or parsing changes, so saved readings are redone. */
+        private const val READING_VERSION = 1
+        private val KEY_JSON = Json { encodeDefaults = true }
         private const val MAX_QUESTION_CHARS = 160
         private val REPORTER_KEYS = mapOf(
             "name" to PREFILL_REPORTER,

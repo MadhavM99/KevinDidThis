@@ -34,6 +34,7 @@ object ExtractionPromptBuilder {
             parts += "id=${field.id}"
             if (field.label.isNotBlank()) parts += "label=\"${field.label}\""
             parts += "type=${field.type.name.lowercase()}"
+            if (field.type == FieldType.DATETIME) field.input?.let { DATE_FORMATS[it] }?.let { parts += "format=$it" }
             if (field.required) parts += "REQUIRED"
             if (field.options.isNotEmpty()) parts += "options=" + field.options.joinToString(" / ") { describeOption(it) }
             if (field.keywords.isNotEmpty()) parts += "keywords=" + field.keywords.joinToString(",")
@@ -117,4 +118,13 @@ object ExtractionPromptBuilder {
             .distinct()
         return if (surfaces.isEmpty()) option.value else "${option.value} (${surfaces.joinToString(", ")})"
     }
+
+    /** How each HTML date/time input writes its value, so the model answers in that shape. */
+    private val DATE_FORMATS = mapOf(
+        "date" to "YYYY-MM-DD",
+        "time" to "HH:MM",
+        "datetime-local" to "YYYY-MM-DDTHH:MM",
+        "month" to "YYYY-MM",
+        "week" to "YYYY-Www",
+    )
 }

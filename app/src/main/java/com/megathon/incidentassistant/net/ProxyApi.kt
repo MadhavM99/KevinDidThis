@@ -28,25 +28,28 @@ interface FormSource {
 }
 
 /**
- * A form page placed on the device (`<external files>/forms/`, see scripts/push-form.sh):
- * `{formId}.html`, else the only `.html` there. Lets a new form be tried with "Refresh form"
- * and no rebuild; absent → [fallback].
+ * The form pushed to the device (`<external files>/forms/`, see scripts/push-form.sh): an
+ * HTML (or JSON) form document. Whatever form is there is the form — the app never asks
+ * which one; with none pushed, [fallback] (the bundled form) is used. Lets a new form be
+ * used with "Reload the form" (or a restart) and no rebuild.
  */
 class DeviceFormSource(
     private val dir: File?,
     private val fallback: FormSource,
 ) : FormSource {
     override suspend fun fetchForm(formId: String): FormSchema = withContext(Dispatchers.IO) {
-        val pages = dir?.listFiles { f -> f.isFile && f.name.endsWith(".html") }.orEmpty()
-        val page = pages.firstOrNull { it.name == "$formId.html" } ?: pages.singleOrNull()
+        // The most recently pushed form document (push-form.sh keeps one at a time).
+        val page = dir?.listFiles { f -> f.isFile && f.extension.lowercase() in FormDocuments.EXTENSIONS }
+            .orEmpty().maxByOrNull { it.lastModified() }
             ?: return@withContext fallback.fetchForm(formId)
         FormDocuments.parse(page.readText(), page.nameWithoutExtension)
     }
 }
 
 /**
- * Sample form shipped with the app (copied from tools/forms/ at build time): `assets/forms/{formId}.html` (an ordinary HTML form,
- * parsed by [com.megathon.incidentassistant.form.HtmlFormParser]), else `{formId}.json`.
+ * The form shipped with the app (copied from forms/ at build time): `assets/forms/{formId}.html`
+ * (an ordinary HTML form, parsed by [com.megathon.incidentassistant.form.HtmlFormParser]), else
+ * `{formId}.json`.
  */
 class BundledFormSource(
     private val context: Context,
@@ -54,11 +57,13 @@ class BundledFormSource(
 ) : FormSource {
     override suspend fun fetchForm(formId: String): FormSchema = withContext(Dispatchers.IO) {
         val available = context.assets.list(assetFolder).orEmpty()
-        val file = listOf("$formId.html", "$formId.json").firstOrNull { it in available }
+        val file = FormDocuments.EXTENSIONS.map { "$formId.$it" }.firstOrNull { it in available }
             ?: throw IOException("no bundled form $formId in assets/$assetFolder")
-        val text = context.assets.open("$assetFolder/$file").bufferedReader().use { it.readText() }
-        FormDocuments.parse(text, formId)
+        FormDocuments.parse(read(file), formId)
     }
+
+    private fun read(name: String) =
+        context.assets.open("$assetFolder/$name").bufferedReader().use { it.readText() }
 }
 
 /**

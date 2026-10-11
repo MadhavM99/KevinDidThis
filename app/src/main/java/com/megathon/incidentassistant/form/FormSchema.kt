@@ -68,6 +68,12 @@ data class FormField(
      * `placeholder` / `aria-describedby` text). Shown to the extraction model, never asked.
      */
     val hint: String? = null,
+    /**
+     * The HTML input kind the form asks for, when it says more than [type]: `date`, `time`,
+     * `datetime-local`, `month`, `week` (all [FieldType.DATETIME]), `number`, `email`, `tel`,
+     * `url`. Decides the value format and the editor (date picker, phone keyboard, …).
+     */
+    val input: String? = null,
 ) {
     /**
      * Every surface form that can indicate this field in speech: the id, the label,

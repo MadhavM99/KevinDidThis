@@ -32,10 +32,16 @@
     <string name="skip_to_review">Skip to review</string>
     <string name="speak_prompts">Speak prompts aloud</string>
     <string name="speak_prompts_hint">Turned off automatically while a screen reader such as TalkBack is active.</string>
-    <string name="refresh_form">Refresh form from server</string>
+    <string name="refresh_form">Reload the form</string>
+    <!-- On-device model indicator (one dot each) -->
+    <string name="model_asr">Speech recognition (Whisper)</string>
+    <string name="model_llm">Language model (Gemma)</string>
+    <string name="model_tts">Voice (text to speech)</string>
+    <string name="model_loading">loading</string>
+    <string name="model_ready">ready</string>
+    <string name="model_failed">unavailable</string>
 
     <!-- Capture screen (conversation layout) -->
-    <string name="report_new">NEW REPORT</string>
     <string name="report_title">Report an incident</string>
     <string name="on_device_ai">ON-DEVICE AI</string>
     <string name="step_chip">%1$d of 3</string>
@@ -60,6 +66,7 @@
     <string name="status_empty_input">Please say or type something first.</string>
     <string name="status_error">Something went wrong while processing. Please try again.</string>
     <string name="status_reading_form">Reading the form…</string>
+    <string name="status_listen_soon">Getting the assistant ready — I\'ll start listening in a moment.</string>
     <string name="profile_title">Your details</string>
     <string name="profile_intro">Reports are filed under your name. This is asked once and stays on this device; it fills the form\'s "reported by" details so the assistant never has to ask.</string>
     <string name="profile_name">Full name</string>
@@ -67,7 +74,8 @@
     <string name="profile_phone">Phone (optional)</string>
     <string name="profile_save">Save</string>
     <string name="profile_cancel">Cancel</string>
-    <string name="profile_edit">Your details: %1$s · Edit</string>
+    <string name="profile_edit_menu">Edit your details</string>
+    <string name="user_menu">Your details and settings</string>
     <string name="status_loading_form">Loading the report form…</string>
     <string name="status_form_error">Could not load the report form on this device.</string>
     <string name="status_submitted_local">Report %1$s is saved on this device, but it was not delivered to a report server.</string>
@@ -121,6 +129,16 @@
     <string name="review_read_aloud">Read report aloud</string>
     <string name="review_add_more">Add more by voice or text</string>
     <string name="field_spoken">%1$s: %2$s.</string>
+    <!-- Review editors -->
+    <string name="edit_tap_to_fill">Tap to fill in…</string>
+    <string name="edit_pick">Tap to choose</string>
+    <string name="edit_clear">Clear</string>
+    <string name="edit_change_date">Change date</string>
+    <string name="edit_change_time">Change time</string>
+    <string name="edit_not_a_date">This isn\'t a date the form accepts — tap to choose one.</string>
+    <string name="edit_not_an_option">Current answer “%1$s” is not one of the choices — pick one.</string>
+    <string name="edit_also">Also: %1$s</string>
+    <string name="edit_list_hint">Separate several entries with commas.</string>
 
     <!-- Done screen -->
     <string name="done_heading">Report submitted</string>

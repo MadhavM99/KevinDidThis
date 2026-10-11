@@ -155,6 +155,7 @@ object HtmlFormParser {
             options = options,
             prefill = prefillFor(control.attr("autocomplete")),
             hint = hint,
+            input = inputType.takeIf { tag == "input" && it in INPUT_KINDS },
         )
     }
 
@@ -238,12 +239,18 @@ object HtmlFormParser {
         text.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
 
     private fun cssEscape(value: String): String = value.replace("\\", "\\\\").replace("\"", "\\\"")
+
+    /** Input types that say how a value is written or entered (kept as [FormField.input]). */
+    private val INPUT_KINDS = setOf("date", "time", "datetime-local", "datetime", "month", "week", "number", "range", "email", "tel", "url")
 }
 
 /** Reads a form definition in either supported format: an HTML page or the JSON schema. */
 object FormDocuments {
+    /** File extensions of form documents, in the order they are looked up. */
+    val EXTENSIONS = listOf("html", "json")
+
     fun parse(text: String, fallbackId: String): FormSchema {
-        val body = text.trimStart('﻿', ' ', '\n', '\r', '\t')
+        val body = text.trimStart('\uFEFF', ' ', '\n', '\r', '\t')
         return if (body.startsWith("<")) HtmlFormParser.parse(body, fallbackId) else FormSchemaParser.parse(body)
     }
 }

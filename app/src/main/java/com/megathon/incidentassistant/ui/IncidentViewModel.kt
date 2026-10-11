@@ -15,6 +15,7 @@ import com.megathon.incidentassistant.ai.MeloTtsSpeechSynthesizer
 import com.megathon.incidentassistant.ai.LlmStatus
 import com.megathon.incidentassistant.ai.NoSpeechException
 import com.megathon.incidentassistant.form.FieldStatus
+import com.megathon.incidentassistant.form.FieldFormats
 import com.megathon.incidentassistant.form.FieldType
 import com.megathon.incidentassistant.form.FieldValue
 import com.megathon.incidentassistant.form.FilledFormRenderer
@@ -31,13 +32,17 @@ import com.megathon.incidentassistant.session.IncidentSession
 import com.megathon.incidentassistant.session.ListenAfterReply
 import com.megathon.incidentassistant.session.ReplyKind
 import com.megathon.incidentassistant.session.FormInterpreter
+import com.megathon.incidentassistant.data.FormReadingStore
 import com.megathon.incidentassistant.session.SessionPhase
 import com.megathon.incidentassistant.session.SessionReply
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import java.io.File
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.ZonedDateTime
@@ -54,6 +59,8 @@ data class UiState(
     val transcriptReady: Boolean = false,
     val processing: Boolean = false,
     val loadingForm: Boolean = true,
+    /** "Loading / reading the form…" while [loadingForm]; shown small, not in the voice card. */
+    val formStatus: String = "",
     val typedText: String = "",
     /** Live ASR caption while [listening]. */
     val partial: String = "",
@@ -78,6 +85,14 @@ data class UiState(
     val asrStatus: String = "",
     val asrReady: Boolean = false,
     val asrFailed: Boolean = false,
+    /** TTS (Piper) warm-up result for the model indicator. */
+    val ttsReady: Boolean = false,
+    val ttsFailed: Boolean = false,
+    /**
+     * The speech recognizer is warmed up: the mic can be used, even while the form is still
+     * being read (a turn recorded meanwhile waits for the form before it is processed).
+     */
+    val inputReady: Boolean = false,
     /** The user's own details (first-launch profile); fills the form's reporter fields. */
     val profile: UserProfile? = null,
     /** Show the "your details" screen: on first launch, or when the user edits them. */
@@ -118,7 +133,7 @@ class IncidentViewModel(
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(
-        UiState(status = appContext.getString(R.string.status_loading_form)),
+        UiState(status = appContext.getString(R.string.status_ready)),
     )
     val ui: StateFlow<UiState> = _ui.asStateFlow()
 
@@ -134,7 +149,11 @@ class IncidentViewModel(
         ProfileIdentityProvider(profiles, ManagedConfigIdentityProvider(appContext))
 
     /** Words each field's question and finds the reporter's own fields (model, once per form). */
-    private val interpreter = FormInterpreter(container.llm, log = { Log.i(TAG, it) })
+    private val interpreter = FormInterpreter(
+        container.llm,
+        log = { Log.i(TAG, it) },
+        store = FormReadingStore(File(appContext.filesDir, "form_readings")),
+    )
     private var session: IncidentSession = newSession(schema)
 
     /** Watches the ASR backend's end-of-speech signal (VAD closed the utterance). */
@@ -145,6 +164,33 @@ class IncidentViewModel(
 
     /** Widget tap: start listening as soon as the form is ready (Siri-style entry). */
     @Volatile private var pendingAutoListen = false
+
+    /**
+     * Whisper has registered its model dir on the DSP search path, which Gemma's Hexagon
+     * backend needs: the form is read by the model only after this (see the init order).
+     */
+    private val asrPrepared = CompletableDeferred<Unit>()
+
+    /**
+     * Whisper and Gemma never run at the same time: together they exhaust memory (std::bad_alloc
+     * in Whisper's worker while Gemma read the form, seen on the QIDK). A recording, from Start
+     * until its transcript is out, holds [asrBusy]; Gemma's load and form reading each count
+     * in [llmJobs]. Each waits for the other; a mic tap during Gemma's work starts right after.
+     */
+    private val asrBusy = MutableStateFlow(false)
+    private val llmJobs = MutableStateFlow(0)
+    private val llmBusy get() = llmJobs.value > 0
+
+    private suspend fun <T> withLlm(block: suspend () -> T): T {
+        asrBusy.first { !it }
+        llmJobs.update { it + 1 } // same main-thread step as the check: no recording slips in
+        try {
+            return block()
+        } finally {
+            llmJobs.update { it - 1 }
+            maybeStartPendingAutoListen()
+        }
+    }
 
     private val clockFormat = DateTimeFormatter.ofPattern("HH:mm")
 
@@ -176,13 +222,23 @@ class IncidentViewModel(
             //     its stack on the DSP (crash, no audio, DSP session lost).
             //  4. LLM: ggml-hexagon opens its own session and leaves the stack alone.
             // Each stage is isolated: a failure must never block the rest of the pipeline.
-            safePrepare("tts") { container.synthesizer.prepare() }
-            safePrepare("asr") { container.speechToText.prepare() }
+            val ttsOk = safePrepare("tts") { container.synthesizer.prepare() }
+            _ui.update { it.copy(ttsReady = ttsOk, ttsFailed = !ttsOk) }
+            val asrOk = safePrepare("asr") { container.speechToText.prepare() }
+            asrPrepared.complete(Unit)
+            _ui.update {
+                if (container.speechToText is com.megathon.incidentassistant.ai.WhisperSpeechToText) {
+                    it.copy(inputReady = true) // its status flow reports ready / failed
+                } else {
+                    it.copy(inputReady = true, asrReady = asrOk, asrFailed = !asrOk)
+                }
+            }
+            // Input does not depend on the form: listening can start now (widget launch).
+            maybeStartPendingAutoListen()
             safePrepare("tts-stack") {
                 (container.synthesizer as? MeloTtsSpeechSynthesizer)?.restoreDspThreadStack()
             }
-            safePrepare("llm") { container.llm.prepare() }
-            maybeStartPendingAutoListen()
+            withLlm { safePrepare("llm") { container.llm.prepare() } }
         }
         viewModelScope.launch {
             container.llm.status.collect { status ->
@@ -215,35 +271,48 @@ class IncidentViewModel(
         viewModelScope.launch { loadForm() }
     }
 
+    /**
+     * Loads and reads the form in the background. The mic does not wait for it: a turn that
+     * is recorded or typed meanwhile waits in [process] until the form is in.
+     */
     private suspend fun loadForm() {
-        _ui.update { it.copy(loadingForm = true, status = str(R.string.status_loading_form)) }
+        _ui.update { it.copy(loadingForm = true, formStatus = str(R.string.status_loading_form)) }
         val fetched = runCatching { container.formSource.fetchForm(AppConfig.DEFAULT_FORM_ID) }.getOrNull()
         if (fetched == null) {
-            _ui.update { it.copy(loadingForm = false, status = str(R.string.status_form_error)) }
+            _ui.update {
+                it.copy(loadingForm = false, formStatus = "", status = str(R.string.status_form_error))
+            }
             return
         }
         // The model reads the new form once: its spoken questions, and which fields are the
-        // reporter's own details (filled from the profile, never asked).
-        _ui.update { it.copy(status = str(R.string.status_reading_form)) }
-        val loaded = interpreter.interpret(fetched)
+        // reporter's own details (filled from the profile, never asked). Gemma may only load
+        // after Whisper's init (DSP library path), so this waits for the ASR stage.
+        _ui.update { it.copy(formStatus = str(R.string.status_reading_form)) }
+        asrPrepared.await()
+        val loaded = if (interpreter.isRead(fetched)) {
+            interpreter.interpret(fetched)
+        } else {
+            withLlm { interpreter.interpret(fetched) }
+        }
         schema = loaded
         session = newSession(loaded)
         _ui.update {
+            val turnInFlight = it.listening || it.processing
             it.copy(
                 loadingForm = false,
+                formStatus = "",
                 schema = loaded,
                 values = session.form.entries(),
                 followUpFieldId = null,
                 followUpQuestion = null,
                 followUpIsConfirmation = false,
-                transcript = "",
-                transcriptReady = false,
-                listening = false,
-                status = str(R.string.status_ready),
+                // A turn recorded while the form was being read carries on with this form.
+                transcript = if (turnInFlight) it.transcript else "",
+                transcriptReady = if (turnInFlight) it.transcriptReady else false,
+                status = if (turnInFlight) it.status else str(R.string.status_ready),
             )
         }
-        pushWidget(str(R.string.widget_status_ready))
-        maybeStartPendingAutoListen()
+        if (!_ui.value.listening && !_ui.value.processing) pushWidget(str(R.string.widget_status_ready))
     }
 
     /**
@@ -257,7 +326,8 @@ class IncidentViewModel(
 
     private fun maybeStartPendingAutoListen() {
         if (!pendingAutoListen) return
-        if (_ui.value.loadingForm) return // retried when the form finishes loading
+        if (!_ui.value.inputReady) return // retried when the ASR is warmed up
+        if (llmBusy) return // retried when Gemma's load / form reading is done
         if (_ui.value.editingProfile) return // retried when the profile is saved
         pendingAutoListen = false
         val state = _ui.value
@@ -312,9 +382,16 @@ class IncidentViewModel(
     /** Start capturing: live captions stream into `partial` until Stop or VAD close. */
     fun onStartRecording() {
         val state = _ui.value
-        if (state.processing || state.listening || state.loadingForm || state.editingProfile ||
-            schema.fields.isEmpty()
+        if (state.processing || state.listening || state.editingProfile || !state.inputReady ||
+            formUnavailable(state)
         ) return
+        if (llmBusy) {
+            // Gemma is loading or reading the form: listen as soon as it is done.
+            pendingAutoListen = true
+            _ui.update { it.copy(status = str(R.string.status_listen_soon)) }
+            return
+        }
+        asrBusy.value = true
         handsFree.cancel() // a tap while a reopen is pending must not start a second recording
         turnId += 1
         turnLog("MICROPHONE_START")
@@ -329,6 +406,7 @@ class IncidentViewModel(
                 throw e
             } catch (e: Exception) {
                 turnLog("MICROPHONE_FAILURE ${e.javaClass.simpleName}")
+                asrBusy.value = false
                 fail() // e.g. ASR model files missing: surface it instead of crashing
             }
         }
@@ -355,7 +433,11 @@ class IncidentViewModel(
         _ui.update { it.copy(listening = false) }
         viewModelScope.launch {
             try {
-                val trimmed = container.speechToText.stopListening().trim()
+                val trimmed = try {
+                    container.speechToText.stopListening().trim()
+                } finally {
+                    asrBusy.value = false // the transcript is out: Gemma may run
+                }
                 turnLog(if (trimmed.isEmpty()) "ASR_EMPTY" else "ASR_SUCCESS chars=${trimmed.length}")
                 if (trimmed.isEmpty()) {
                     reprompt()
@@ -427,7 +509,7 @@ class IncidentViewModel(
     /** Fallback entry without the microphone: type the whole utterance. */
     fun onSendTyped() {
         val state = _ui.value
-        if (state.processing || state.listening || state.loadingForm) return
+        if (state.processing || state.listening || formUnavailable(state)) return
         if (state.typedText.isBlank()) {
             setStatus(R.string.status_empty_input, speak = false)
             return
@@ -450,6 +532,12 @@ class IncidentViewModel(
     private suspend fun process(text: String) {
         _ui.update { it.copy(transcript = text, processing = true) }
         noSpeechStreak = 0
+        // Spoken before the form was in (it loads in the background): wait for it.
+        val ready = _ui.first { !it.loadingForm }
+        if (formUnavailable(ready)) {
+            _ui.update { it.copy(processing = false, status = str(R.string.status_form_error)) }
+            return
+        }
         val current = session
         val reply = current.onUtterance(text)
         if (current !== session) return
@@ -631,12 +719,19 @@ class IncidentViewModel(
                 asrStatus = it.asrStatus,
                 asrReady = it.asrReady,
                 asrFailed = it.asrFailed,
+                ttsReady = it.ttsReady,
+                ttsFailed = it.ttsFailed,
+                inputReady = it.inputReady,
+                profile = it.profile,
             )
         }
         pushWidget(str(R.string.widget_status_ready))
     }
 
     // ---------- helpers ----------
+
+    /** The form could not be loaded at all: there is nothing to fill in. */
+    private fun formUnavailable(state: UiState) = !state.loadingForm && state.schema.fields.isEmpty()
 
     fun displayValue(field: FormField, value: String): String {
         if (field.type == FieldType.ENUM) {
@@ -645,6 +740,12 @@ class IncidentViewModel(
         }
         if (field.type == FieldType.BOOLEAN) {
             return value.replaceFirstChar { it.uppercase() }
+        }
+        if (field.type == FieldType.DATETIME) return FieldFormats.display(field, value)
+        if (field.type == FieldType.STRING_LIST && field.options.isNotEmpty()) {
+            return value.split(';').map { it.trim() }.filter { it.isNotEmpty() }.joinToString(", ") { item ->
+                field.options.firstOrNull { it.value.equals(item, ignoreCase = true) }?.label?.ifBlank { null } ?: item
+            }
         }
         return value
     }
@@ -701,15 +802,16 @@ class IncidentViewModel(
             .isSuccess
 
     /** Isolates one warm-up stage so a failure never blocks the rest of the pipeline. */
-    private suspend fun safePrepare(stage: String, block: suspend () -> Unit) {
+    private suspend fun safePrepare(stage: String, block: suspend () -> Unit): Boolean =
         try {
             block()
+            true
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.w(TAG, "$stage warm-up failed: ${e.message}")
+            false
         }
-    }
 
     /** Mirrors the assistant state on the home-screen widget. */
     private fun pushWidget(status: String) = IncidentWidget.pushStatus(appContext, status)

@@ -6,6 +6,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,8 +22,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.Article
@@ -49,6 +51,9 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -65,17 +70,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.megathon.incidentassistant.R
@@ -113,13 +122,12 @@ fun CaptureScreen(state: UiState, vm: IncidentViewModel, onStartRecording: () ->
             .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        Header(state)
-        ModelStatusRow(state)
+        Header(state, vm)
         VoiceCard(state, vm, onStartRecording)
         ExtractedDetails(state, vm)
         Button(
             onClick = vm::onSkipToReview,
-            enabled = !state.loadingForm,
+            enabled = !state.loadingForm && state.schema.fields.isNotEmpty(),
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier
                 .fillMaxWidth()
@@ -136,121 +144,230 @@ fun CaptureScreen(state: UiState, vm: IncidentViewModel, onStartRecording: () ->
 // ---------- header ----------
 
 @Composable
-private fun Header(state: UiState) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                stringResource(R.string.report_new),
-                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.6.sp),
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                stringResource(R.string.report_title),
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.semantics { heading() },
-            )
+private fun Header(state: UiState, vm: IncidentViewModel) {
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            UserMenu(state, vm)
+            Spacer(Modifier.weight(1f))
+            ModelSignal(state)
         }
-        OnDeviceBadge(state)
+        Text(
+            stringResource(R.string.report_title),
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.semantics { heading() },
+        )
     }
 }
 
 /**
- * A row of per-model status badges: one for Whisper ASR and one for Gemma LLM.
- * Each badge shows a coloured dot (loading = amber, ready = green, failed = red).
+ * The user's initials, top left. Opens the per-user settings: who reports are filed under
+ * (it fills the form's "reported by" fields), spoken prompts, and reloading the form.
  */
 @Composable
-private fun ModelStatusRow(state: UiState) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        ModelStatusBadge(
-            label = "WHISPER ASR",
-            detail = state.asrStatus,
-            isReady = state.asrReady,
-            isFailed = state.asrFailed,
-            modifier = Modifier.weight(1f),
-        )
-        ModelStatusBadge(
-            label = "GEMMA LLM",
-            detail = state.llmStatus,
-            isReady = state.llmReady,
-            isFailed = state.llmFailed,
-            modifier = Modifier.weight(1f),
-        )
-    }
-}
-
-@Composable
-private fun ModelStatusBadge(
-    label: String,
-    detail: String,
-    isReady: Boolean,
-    isFailed: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    val dot = when {
-        isFailed -> MaterialTheme.colorScheme.error
-        isReady -> Color(0xFF1B7F5A)
-        else -> Color(0xFFB07A1E)
-    }
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        modifier = modifier,
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
+private fun UserMenu(state: UiState, vm: IncidentViewModel) {
+    var open by remember { mutableStateOf(false) }
+    val name = state.profile?.name.orEmpty()
+    val initials = name.split(' ').filter { it.isNotBlank() }.take(2)
+        .joinToString("") { it.first().uppercase() }
+    val busy = state.processing || state.listening
+    Box {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .clickable(
+                    onClickLabel = stringResource(R.string.user_menu),
+                    role = Role.Button,
+                ) { open = true }
+                .heightIn(min = 48.dp)
+                .padding(end = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    label,
-                    style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.sp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = FontWeight.SemiBold,
-                )
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (initials.isNotEmpty()) {
+                    Text(
+                        initials,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                } else {
+                    Icon(
+                        Icons.Outlined.Person,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
-            if (detail.isNotBlank()) {
+            if (name.isNotEmpty()) {
+                Spacer(Modifier.width(8.dp))
                 Text(
-                    detail,
-                    style = MaterialTheme.typography.labelSmall,
+                    name,
+                    style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 160.dp),
                 )
             }
         }
-    }
-}
-
-/** "ON-DEVICE AI" with a status dot: green ready, amber warming up, red failed. */
-@Composable
-private fun OnDeviceBadge(state: UiState) {
-    val dot = when {
-        state.llmFailed -> MaterialTheme.colorScheme.error
-        state.llmReady -> Color(0xFF1B7F5A)
-        else -> Color(0xFFB07A1E)
-    }
-    Surface(
-        shape = RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
-            Spacer(Modifier.width(6.dp))
-            Text(
-                stringResource(R.string.on_device_ai),
-                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.sp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            state.profile?.let { profile ->
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Text(profile.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    listOf(profile.email, profile.phone).filter { it.isNotBlank() }.forEach {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                HorizontalDivider()
+            }
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.profile_edit_menu)) },
+                leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
+                enabled = !busy,
+                onClick = { open = false; vm.onEditProfile() },
+            )
+            DropdownMenuItem(
+                text = {
+                    Column {
+                        Text(stringResource(R.string.speak_prompts))
+                        Text(
+                            stringResource(R.string.speak_prompts_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
+                leadingIcon = { Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null) },
+                trailingIcon = { Switch(checked = state.speakPrompts, onCheckedChange = null) },
+                onClick = { vm.onSpeakPromptsChanged(!state.speakPrompts) },
+                modifier = Modifier.semantics { role = Role.Switch },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.refresh_form)) },
+                leadingIcon = { Icon(Icons.Filled.Refresh, contentDescription = null) },
+                enabled = !busy && !state.loadingForm,
+                onClick = { open = false; vm.onRefreshForm() },
             )
         }
     }
+}
+
+/** Load state of one on-device model, for [ModelSignal]. */
+private enum class ModelState { LOADING, READY, FAILED }
+
+private fun modelState(ready: Boolean, failed: Boolean) = when {
+    failed -> ModelState.FAILED
+    ready -> ModelState.READY
+    else -> ModelState.LOADING
+}
+
+/**
+ * One dot per on-device model — speech recognition, language model, voice — lit green when
+ * ready, pulsing amber while loading, red if it failed. Tap for the details.
+ */
+@Composable
+private fun ModelSignal(state: UiState) {
+    val models = listOf(
+        Triple(stringResource(R.string.model_asr), modelState(state.asrReady, state.asrFailed), state.asrStatus),
+        Triple(stringResource(R.string.model_llm), modelState(state.llmReady, state.llmFailed), state.llmStatus),
+        Triple(stringResource(R.string.model_tts), modelState(state.ttsReady, state.ttsFailed), ""),
+    )
+    val labels = ModelState.entries.associateWith { stateLabel(it) }
+    val summary = models.joinToString(", ") { (name, st, _) -> "$name ${labels.getValue(st)}" }
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Surface(
+            shape = RoundedCornerShape(50),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .clickable(role = Role.Button) { open = true }
+                .semantics(mergeDescendants = true) { contentDescription = summary },
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                models.forEach { (_, st, _) -> SignalDot(st) }
+                Spacer(Modifier.width(3.dp))
+                Text(
+                    stringResource(R.string.on_device_ai),
+                    style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            models.forEach { (name, st, detail) ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(name, style = MaterialTheme.typography.labelLarge)
+                            Text(
+                                detail.ifBlank { labels.getValue(st) },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    },
+                    leadingIcon = { SignalDot(st) },
+                    onClick = { open = false },
+                )
+            }
+            if (state.formStatus.isNotBlank()) {
+                HorizontalDivider()
+                Text(
+                    state.formStatus,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun stateLabel(st: ModelState) = stringResource(
+    when (st) {
+        ModelState.LOADING -> R.string.model_loading
+        ModelState.READY -> R.string.model_ready
+        ModelState.FAILED -> R.string.model_failed
+    }
+)
+
+@Composable
+private fun SignalDot(st: ModelState) {
+    val color = when (st) {
+        ModelState.FAILED -> MaterialTheme.colorScheme.error
+        ModelState.READY -> Color(0xFF1B7F5A)
+        ModelState.LOADING -> Color(0xFFB07A1E)
+    }
+    val alpha = if (st == ModelState.LOADING) {
+        val pulse by rememberInfiniteTransition(label = "dot").animateFloat(
+            initialValue = 0.3f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
+            label = "alpha",
+        )
+        pulse
+    } else {
+        1f
+    }
+    Box(Modifier.size(9.dp).alpha(alpha).clip(CircleShape).background(color))
 }
 
 // ---------- the voice card ----------
@@ -343,8 +460,10 @@ private fun VoiceCard(state: UiState, vm: IncidentViewModel, onStartRecording: (
                         state.transcriptReady -> stringResource(R.string.rec_rerecord)
                         else -> stringResource(R.string.voice_start)
                     },
+                    // Input does not wait for the form: it is read in the background.
                     enabled = state.listening || state.transcriptReady ||
-                        (!state.loadingForm && !state.processing && state.schema.fields.isNotEmpty()),
+                        (state.inputReady && !state.processing &&
+                            (state.loadingForm || state.schema.fields.isNotEmpty())),
                 )
                 if (state.followUpQuestion != null && !state.listening) {
                     TextButton(
@@ -418,7 +537,10 @@ private fun WaveformBars(color: Color) {
 
 @Composable
 private fun ExtractedDetails(state: UiState, vm: IncidentViewModel) {
-    val filled = state.schema.fields.filter { state.values[it.id]?.value?.isNotBlank() == true }
+    // The reporter's own details come from the profile (top-left menu), not the conversation.
+    val filled = state.schema.fields.filter {
+        it.prefill == null && state.values[it.id]?.value?.isNotBlank() == true
+    }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -526,7 +648,7 @@ private fun iconFor(field: FormField): ImageVector = when (field.type) {
     }
 }
 
-// ---------- secondary controls (typing fallback, toggles, refresh) ----------
+// ---------- secondary controls (typing fallback) ----------
 
 @Composable
 private fun SecondaryControls(state: UiState, vm: IncidentViewModel) {
@@ -547,22 +669,6 @@ private fun SecondaryControls(state: UiState, vm: IncidentViewModel) {
             }
             if (typingOpen) TypedInput(state, vm)
         }
-
-        SpeakPromptsRow(state.speakPrompts, vm::onSpeakPromptsChanged)
-
-        state.profile?.let { profile ->
-            TextButton(
-                onClick = vm::onEditProfile,
-                enabled = !state.processing && !state.listening,
-                modifier = Modifier.heightIn(min = MinTouch),
-            ) { Text(stringResource(R.string.profile_edit, profile.name)) }
-        }
-
-        TextButton(
-            onClick = vm::onRefreshForm,
-            enabled = !state.processing && !state.listening && !state.loadingForm,
-            modifier = Modifier.heightIn(min = MinTouch),
-        ) { Text(stringResource(R.string.refresh_form)) }
     }
 }
 
@@ -593,26 +699,5 @@ private fun TypedInput(state: UiState, vm: IncidentViewModel) {
             Spacer(Modifier.width(8.dp))
             Text(stringResource(R.string.send))
         }
-    }
-}
-
-@Composable
-private fun SpeakPromptsRow(checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = MinTouch)
-            .toggleable(value = checked, role = Role.Switch, onValueChange = onChange),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(stringResource(R.string.speak_prompts), style = MaterialTheme.typography.bodyLarge)
-            Text(
-                stringResource(R.string.speak_prompts_hint),
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-        Spacer(Modifier.width(16.dp))
-        Switch(checked = checked, onCheckedChange = null)
     }
 }
