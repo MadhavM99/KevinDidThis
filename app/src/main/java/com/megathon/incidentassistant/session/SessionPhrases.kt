@@ -32,6 +32,9 @@ interface SessionPhrases {
     fun notSpecified(): String
     fun confirmReport(summary: String): String
     fun whatToChange(): String
+
+    /** The user confirmed the summary; the filled-in form is on screen, ready to send. */
+    fun formReady(): String
     fun noChangeHeard(): String
 
     fun didNotUnderstand(): String

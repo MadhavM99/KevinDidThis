@@ -14,6 +14,7 @@ import com.megathon.incidentassistant.ai.WhisperSpeechToText
 import com.megathon.incidentassistant.data.InMemoryReportRepository
 import com.megathon.incidentassistant.data.ReportRepository
 import com.megathon.incidentassistant.net.BundledFormSource
+import com.megathon.incidentassistant.net.DeviceFormSource
 import com.megathon.incidentassistant.net.FormSource
 import com.megathon.incidentassistant.net.HttpFormSource
 import com.megathon.incidentassistant.net.HttpReportSubmitter
@@ -38,7 +39,8 @@ object AppConfig {
 
     /**
      * A published form page (any ordinary HTML `<form>`) to build the conversation from.
-     * Blank: the bundled sample `assets/forms/incident_report.html` is used.
+     * Blank: a page pushed to the device (`files/forms/`, scripts/push-form.sh) is used, else
+     * the one bundled from `tools/forms/incident_report.html`.
      */
     const val FORM_URL = ""
 }
@@ -78,7 +80,14 @@ class AppContainer(context: Context) {
 
     /** Bundled sample by default; the server (when configured) replaces it. */
     val formSource: FormSource =
-        HttpFormSource(AppConfig.SERVER_BASE_URL, BundledFormSource(appContext), AppConfig.FORM_URL)
+        HttpFormSource(
+            AppConfig.SERVER_BASE_URL,
+            DeviceFormSource(
+                appContext.getExternalFilesDir(null)?.let { java.io.File(it, "forms") },
+                BundledFormSource(appContext),
+            ),
+            AppConfig.FORM_URL,
+        )
 
     val reportSubmitter: ReportSubmitter = HttpReportSubmitter(AppConfig.SERVER_BASE_URL)
 }

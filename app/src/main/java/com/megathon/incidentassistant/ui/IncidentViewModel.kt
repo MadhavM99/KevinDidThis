@@ -17,8 +17,10 @@ import com.megathon.incidentassistant.ai.NoSpeechException
 import com.megathon.incidentassistant.form.FieldStatus
 import com.megathon.incidentassistant.form.FieldType
 import com.megathon.incidentassistant.form.FieldValue
+import com.megathon.incidentassistant.form.FilledFormRenderer
 import com.megathon.incidentassistant.form.FormField
 import com.megathon.incidentassistant.form.FormSchema
+import kotlinx.serialization.json.jsonObject
 import com.megathon.incidentassistant.data.LocalProfileStore
 import com.megathon.incidentassistant.data.ManagedConfigIdentityProvider
 import com.megathon.incidentassistant.data.ProfileIdentityProvider
@@ -28,7 +30,7 @@ import com.megathon.incidentassistant.session.IdentityProvider
 import com.megathon.incidentassistant.session.IncidentSession
 import com.megathon.incidentassistant.session.ListenAfterReply
 import com.megathon.incidentassistant.session.ReplyKind
-import com.megathon.incidentassistant.session.ReporterFieldClassifier
+import com.megathon.incidentassistant.session.FormInterpreter
 import com.megathon.incidentassistant.session.SessionPhase
 import com.megathon.incidentassistant.session.SessionReply
 import kotlinx.coroutines.CancellationException
@@ -41,7 +43,8 @@ import kotlinx.coroutines.launch
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
-enum class Step { CAPTURE, REVIEW, SUBMITTED }
+/** [FORM]: the original form page, filled in, with its submit button. */
+enum class Step { CAPTURE, REVIEW, FORM, SUBMITTED }
 
 data class UiState(
     val step: Step = Step.CAPTURE,
@@ -79,6 +82,8 @@ data class UiState(
     val profile: UserProfile? = null,
     /** Show the "your details" screen: on first launch, or when the user edits them. */
     val editingProfile: Boolean = false,
+    /** [Step.FORM]: the form page with the answers filled in (see FilledFormRenderer). */
+    val filledFormHtml: String? = null,
 ) {
     fun field(fieldId: String): FormField? = schema.field(fieldId)
 
@@ -128,8 +133,8 @@ class IncidentViewModel(
     private val identity: IdentityProvider =
         ProfileIdentityProvider(profiles, ManagedConfigIdentityProvider(appContext))
 
-    /** Finds the form's own-name / email / phone fields (model-assisted, once per form). */
-    private val reporterFields = ReporterFieldClassifier(container.llm, log = { Log.i(TAG, it) })
+    /** Words each field's question and finds the reporter's own fields (model, once per form). */
+    private val interpreter = FormInterpreter(container.llm, log = { Log.i(TAG, it) })
     private var session: IncidentSession = newSession(schema)
 
     /** Watches the ASR backend's end-of-speech signal (VAD closed the utterance). */
@@ -217,9 +222,10 @@ class IncidentViewModel(
             _ui.update { it.copy(loadingForm = false, status = str(R.string.status_form_error)) }
             return
         }
-        // Which fields are the reporter's own details: filled from the profile, never asked.
+        // The model reads the new form once: its spoken questions, and which fields are the
+        // reporter's own details (filled from the profile, never asked).
         _ui.update { it.copy(status = str(R.string.status_reading_form)) }
-        val loaded = reporterFields.classify(fetched)
+        val loaded = interpreter.interpret(fetched)
         schema = loaded
         session = newSession(loaded)
         _ui.update {
@@ -470,17 +476,19 @@ class IncidentViewModel(
                 followUpFieldId = reply.pendingFieldIds.firstOrNull(),
                 // INFO = nothing to answer (e.g. repeated off-topic): no follow-up prompt, so
                 // the hands-free loop waits for a tap instead of re-opening the mic.
-                followUpQuestion = reply.speech.takeIf { open && reply.kind != ReplyKind.INFO },
+                followUpQuestion = reply.speech.takeIf { open && reply.kind != ReplyKind.INFO && reply.kind != ReplyKind.FORM_READY },
                 followUpIsConfirmation = reply.kind == ReplyKind.CONFIRM,
                 step = if (reply.phase == SessionPhase.SUBMITTED) Step.SUBMITTED else it.step,
                 submittedId = reply.reportId ?: it.submittedId,
             )
         }
         turnLog("FOLLOWUP_READY phase=${reply.phase} kind=${reply.kind} pending=${reply.pendingFieldIds.size}")
+        // Spoken "yes" to the summary: show the filled-in form; its submit button files it.
+        if (reply.kind == ReplyKind.FORM_READY) showFilledForm()
         // Speak, then reopen the mic only if the reply expects an answer.
         handsFree.afterReply(
             text = reply.speech,
-            listenAfter = open && reply.kind != ReplyKind.INFO,
+            listenAfter = open && reply.kind != ReplyKind.INFO && reply.kind != ReplyKind.FORM_READY,
             speak = { speakPrompt(reply.speech) },
             onReady = ::maybeAutoListen,
         )
@@ -560,6 +568,48 @@ class IncidentViewModel(
         }
     }
 
+    /**
+     * Review's Submit: show the original form page filled in (HTML forms); its submit button
+     * then files the report. Forms without a page (JSON) are filed directly, as before.
+     */
+    fun onShowFilledForm() {
+        if (_ui.value.processing) return
+        if (schema.sourceHtml == null) return onSubmit()
+        showFilledForm()
+    }
+
+    private fun showFilledForm() {
+        val html = schema.sourceHtml ?: return
+        val values = session.form.entries().mapValues { it.value.value }
+        val rendered = FilledFormRenderer.render(html, values, str(R.string.form_submit))
+        _ui.update { it.copy(step = Step.FORM, filledFormHtml = rendered, followUpQuestion = null) }
+    }
+
+    /**
+     * The form page's submit button (called from the WebView bridge, any thread). The values
+     * are taken as they are on the page, so edits made there count; then the usual submit
+     * (mandatory-field gate, local save, server POST).
+     */
+    fun onSubmitFilledForm(json: String) {
+        val onPage = runCatching {
+            kotlinx.serialization.json.Json.parseToJsonElement(json).jsonObject
+                .mapValues { (it.value as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty() }
+        }.getOrDefault(emptyMap())
+        viewModelScope.launch {
+            for (field in schema.fields) {
+                val value = onPage[field.id]?.trim() ?: continue
+                if (session.form.isAppProvided(field.id)) continue
+                if (value != session.form.get(field.id).value) session.form.setDirect(field.id, value)
+            }
+            _ui.update { it.copy(values = session.form.entries()) }
+            onSubmit()
+        }
+    }
+
+    fun onBackFromForm() {
+        _ui.update { it.copy(step = Step.REVIEW, filledFormHtml = null) }
+    }
+
     fun onNewReport() = resetDraft(stopSpeech = true)
 
     private fun resetDraft(stopSpeech: Boolean) {
@@ -607,6 +657,8 @@ class IncidentViewModel(
         submitter = container.reportSubmitter,
         now = { ZonedDateTime.now().toString() },
         reporter = identity.currentUser(),
+        // HTML forms end on the filled-in page and its submit button; JSON forms on "yes".
+        submitOnSpokenYes = form.sourceHtml == null,
     )
 
     private fun describe(status: LlmStatus): String = when (status) {

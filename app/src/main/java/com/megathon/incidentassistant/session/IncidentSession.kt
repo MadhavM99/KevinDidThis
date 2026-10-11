@@ -36,7 +36,8 @@ enum class SessionPhase {
     CANCELLED,
 }
 
-enum class ReplyKind { ASK, CONFIRM, INFO, ERROR, DONE }
+/** [FORM_READY]: the user confirmed; the filled-in form is shown for them to send. */
+enum class ReplyKind { ASK, CONFIRM, INFO, ERROR, DONE, FORM_READY }
 
 /** Stage timings of one turn in ms (§11.3). Contains no user content, safe to log. */
 data class TurnMetrics(
@@ -90,6 +91,12 @@ class IncidentSession(
     private val newReportId: () -> String = ReportIds::newReportId,
     /** The signed-in user from a trusted source; null = unknown, nothing is assumed. */
     reporter: UserIdentity? = null,
+    /**
+     * true: a spoken "yes" to the summary files the report. false: it answers
+     * [ReplyKind.FORM_READY] and the report is filed by [submitConfirmedByUser] — the app
+     * shows the filled-in form first and its submit button sends it.
+     */
+    private val submitOnSpokenYes: Boolean = true,
 ) {
     val form = FormState(schema).also { form ->
         // App-provided context, validated against the schema like any value: the reporter is
@@ -338,7 +345,8 @@ class IncidentSession(
         context: List<ConversationTurn>,
         turn: Turn,
     ): SessionReply = when (intent) {
-        FastIntent.YES -> submit()
+        FastIntent.YES -> if (submitOnSpokenYes || !form.gatePasses()) submit()
+            else say(phrases.formReady(), ReplyKind.FORM_READY)
         FastIntent.NO -> say(phrases.whatToChange(), ReplyKind.ASK)
         FastIntent.UNKNOWN, FastIntent.SKIP, FastIntent.NONE -> lastAsk ?: advance(turn)
         else -> {

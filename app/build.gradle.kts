@@ -1,3 +1,13 @@
+// The form pages the app ships come from tools/forms/ (the same folder tools/mock_proxy.py
+// serves), copied into the assets at build time: edit or replace a page there and rebuild —
+// there is no second copy in the app sources. A page pushed to the device overrides it with
+// no rebuild at all (scripts/push-form.sh).
+val bundledForms = layout.buildDirectory.dir("generated/bundledForms")
+val copyBundledForms by tasks.registering(Copy::class) {
+    from(rootProject.file("tools/forms")) { include("*.html") }
+    into(bundledForms.map { it.dir("forms") })
+}
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -28,7 +38,10 @@ android {
     buildFeatures { compose = true }
     sourceSets {
         // Qualcomm Whisper SDK native libs land in app/libs/arm64-v8a via scripts/fetch-whisper-sdk.sh
-        getByName("main") { jniLibs.srcDir("libs") }
+        getByName("main") {
+            jniLibs.srcDir("libs")
+            assets.srcDir(bundledForms)
+        }
     }
     packaging {
         jniLibs {
@@ -69,3 +82,5 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
 }
+
+tasks.named("preBuild") { dependsOn(copyBundledForms) }

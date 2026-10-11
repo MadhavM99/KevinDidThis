@@ -38,6 +38,8 @@ class ResourcePhrases(private val context: Context) : SessionPhrases {
 
     override fun whatToChange() = str(R.string.what_to_change)
 
+    override fun formReady() = str(R.string.form_ready)
+
     override fun noChangeHeard() = str(R.string.no_change_heard)
 
     override fun didNotUnderstand() = str(R.string.did_not_understand)

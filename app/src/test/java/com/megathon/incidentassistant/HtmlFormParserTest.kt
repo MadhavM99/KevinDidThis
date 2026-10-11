@@ -9,7 +9,7 @@ import com.megathon.incidentassistant.session.ExtractionEngine
 import com.megathon.incidentassistant.session.IncidentSession
 import com.megathon.incidentassistant.session.PREFILL_EMAIL
 import com.megathon.incidentassistant.session.PREFILL_REPORTER
-import com.megathon.incidentassistant.session.ReporterFieldClassifier
+import com.megathon.incidentassistant.session.FormInterpreter
 import com.megathon.incidentassistant.session.ReplyKind
 import com.megathon.incidentassistant.session.SessionPhase
 import com.megathon.incidentassistant.session.UserIdentity
@@ -23,7 +23,7 @@ import org.junit.Test
 /** HTML form page → the schema the assistant fills; nothing about incidents is in the parser. */
 class HtmlFormParserTest {
 
-    private val html = formFixture("incident_report.html").readText()
+    private val html = testFormPage("sample_incident.html")
     private val schema = HtmlFormParser.parse(html)
 
     @Test
@@ -146,7 +146,7 @@ class HtmlFormParserTest {
 
     @Test
     fun formDocumentsReadsHtmlOrJson() {
-        assertEquals(schema, FormDocuments.parse("\n  $html", "x"))
+        assertEquals(schema.fields, FormDocuments.parse("\n  $html", "x").fields)
         val json = FormDocuments.parse(formFixture("incident_report.json").readText(), "x")
         assertEquals("incident_report", json.id)
         assertTrue(json.fields.first { it.id == "incident_type" }.keywords.isNotEmpty())
@@ -154,10 +154,10 @@ class HtmlFormParserTest {
 
     @Test
     fun aConversationOnTheHtmlFormFillsTheMandatoryFieldsAndFilesOnlyAfterYes() = runBlocking {
-        // Form load: the model points out the reporter's own fields.
-        val classifier = ScriptedLlm.of("""{"name": "reported_by", "email": "reporter_email", "phone": null}""")
-        val form = ReporterFieldClassifier(classifier).classify(schema)
-        assertEquals(1, classifier.calls)
+        // Form load: the model points out the reporter's own fields (questions come from titles).
+        val reader = ScriptedLlm.of("name: reported_by\nemail: reporter_email\nphone: none")
+        val form = FormInterpreter(reader).interpret(schema)
+        assertEquals(1, reader.calls)
 
         val llm = ScriptedLlm.of(
             recordFields(
@@ -211,5 +211,25 @@ class HtmlFormParserTest {
         assertTrue(asked.none { "reported_by" in it || "reporter_email" in it })
         assertEquals(1, repository.saved.size)
         assertEquals(1, llm.calls)
+    }
+
+    @Test
+    fun aRealWorldPageWithIdsOnlyMarkersInLabelsAndAScriptIsReadFromItsMarkup() {
+        // A user-supplied page: no `name`s, "(required)" spans inside labels, a readonly
+        // report number, and a script that fills the form with random data in a browser.
+        val s = HtmlFormParser.parse(testFormPage("user_incident_form.html"))
+        assertEquals("Incident report form", s.title)
+        assertEquals(
+            listOf("type", "severity", "when", "where", "reporter", "persons", "equipment", "witness", "desc", "actions", "followup"),
+            s.fields.map { it.id },
+        ) // "id" (readonly Report ID) is not asked
+        assertEquals(listOf("type", "severity", "when", "where", "desc"), s.requiredFields.map { it.id })
+        assertEquals("Incident type", s.field("type")!!.label) // "(required)" marker stripped
+        assertEquals("Incident location", s.field("where")!!.label)
+        assertEquals(listOf("Low", "Medium", "High", "Critical"), s.field("severity")!!.options.map { it.value })
+        assertEquals(FieldType.DATETIME, s.field("when")!!.type)
+        assertEquals(FieldType.TEXTAREA, s.field("desc")!!.type)
+        assertTrue(s.fields.all { it.defaultValue == null }) // script values are never read
+        assertTrue(s.fields.all { it.question == null }) // no titles: the model words them at load
     }
 }

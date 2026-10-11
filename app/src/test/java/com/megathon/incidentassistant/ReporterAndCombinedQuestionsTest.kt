@@ -5,7 +5,7 @@ import com.megathon.incidentassistant.form.FieldStatus
 import com.megathon.incidentassistant.form.FormSchema
 import com.megathon.incidentassistant.form.FormSchemaParser
 import com.megathon.incidentassistant.form.HtmlFormParser
-import com.megathon.incidentassistant.session.ReporterFieldClassifier
+import com.megathon.incidentassistant.session.FormInterpreter
 import com.megathon.incidentassistant.form.UpdateStatus
 import com.megathon.incidentassistant.session.ExtractionEngine
 import com.megathon.incidentassistant.session.IncidentSession
@@ -21,13 +21,10 @@ import java.io.File
 /** Reporter prefill from a trusted identity, and combined questions for missing fields. */
 class ReporterAndCombinedQuestionsTest {
 
-    /** The form the app ships (an HTML page in assets), with the reporter field found at load. */
+    /** The sample HTML form, with its reporter field found by the model at load. */
     private val appForm: FormSchema = runBlocking {
-        val html = listOf(File("src/main/assets/forms/incident_report.html"), File("app/src/main/assets/forms/incident_report.html"))
-            .first { it.exists() }
-            .readText()
-        ReporterFieldClassifier(ScriptedLlm.of("""{"name":"reported_by","email":null,"phone":null}"""))
-            .classify(HtmlFormParser.parse(html))
+        FormInterpreter(ScriptedLlm.of("name: reported_by\nemail: none\nphone: none"))
+            .interpret(HtmlFormParser.parse(testFormPage("sample_incident.html")))
     }
     private val alice = UserIdentity("Alice Rao", source = "device management profile")
     private val severityQuestion = "How severe is it — low, medium, high, or critical?"

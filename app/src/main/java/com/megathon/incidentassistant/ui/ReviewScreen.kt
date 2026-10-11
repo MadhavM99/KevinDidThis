@@ -443,7 +443,7 @@ private fun ActionButtons(vm: IncidentViewModel) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Button(
-            onClick = vm::onSubmit,
+            onClick = vm::onShowFilledForm,
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier
                 .fillMaxWidth()

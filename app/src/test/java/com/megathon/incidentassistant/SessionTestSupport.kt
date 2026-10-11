@@ -39,6 +39,10 @@ fun formFixture(name: String): File {
     return file
 }
 
+/** A test form page from `src/test/resources/forms/` (independent of the live tools/forms page). */
+fun testFormPage(name: String): String =
+    checkNotNull(SessionFixture::class.java.classLoader!!.getResource("forms/$name")) { "test form $name missing" }.readText()
+
 /** One field update as the model would emit it. */
 data class U(
     val field: String,
@@ -116,6 +120,7 @@ class TestPhrases : SessionPhrases {
     override fun notSpecified() = "not specified"
     override fun confirmReport(summary: String) = "SUMMARY $summary File it?"
     override fun whatToChange() = "What should I change?"
+    override fun formReady() = "FORM READY"
     override fun noChangeHeard() = "No change heard."
     override fun didNotUnderstand() = "Did not understand."
     override fun didNotHear() = "Did not hear."

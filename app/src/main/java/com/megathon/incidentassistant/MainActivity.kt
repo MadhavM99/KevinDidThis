@@ -34,6 +34,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.megathon.incidentassistant.ui.CaptureScreen
 import com.megathon.incidentassistant.ui.DoneScreen
+import com.megathon.incidentassistant.ui.FilledFormScreen
 import com.megathon.incidentassistant.ui.IncidentTheme
 import com.megathon.incidentassistant.ui.IncidentViewModel
 import com.megathon.incidentassistant.ui.IncidentViewModelFactory
@@ -129,6 +130,7 @@ fun IncidentAssistantRoot(vm: IncidentViewModel) {
                 val stepText = stringResource(
                     when (state.step) {
                         Step.REVIEW -> R.string.step_review
+                        Step.FORM -> R.string.step_form
                         Step.SUBMITTED -> R.string.step_done
                         Step.CAPTURE -> R.string.step_capture
                     }
@@ -137,6 +139,7 @@ fun IncidentAssistantRoot(vm: IncidentViewModel) {
                 Box(Modifier.fillMaxSize().semantics { paneTitle = stepText }) {
                     when (state.step) {
                         Step.REVIEW -> ReviewScreen(state, vm, onBack = vm::onAddMore)
+                        Step.FORM -> FilledFormScreen(state, vm)
                         Step.SUBMITTED -> DoneScreen(state, vm)
                         Step.CAPTURE -> Unit // handled by the immersive branch
                     }

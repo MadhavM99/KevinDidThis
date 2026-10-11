@@ -5,6 +5,7 @@ import com.megathon.incidentassistant.form.FormSchema
 import com.megathon.incidentassistant.form.FormDocuments
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
@@ -27,7 +28,24 @@ interface FormSource {
 }
 
 /**
- * Sample form shipped with the app: `assets/forms/{formId}.html` (an ordinary HTML form,
+ * A form page placed on the device (`<external files>/forms/`, see scripts/push-form.sh):
+ * `{formId}.html`, else the only `.html` there. Lets a new form be tried with "Refresh form"
+ * and no rebuild; absent → [fallback].
+ */
+class DeviceFormSource(
+    private val dir: File?,
+    private val fallback: FormSource,
+) : FormSource {
+    override suspend fun fetchForm(formId: String): FormSchema = withContext(Dispatchers.IO) {
+        val pages = dir?.listFiles { f -> f.isFile && f.name.endsWith(".html") }.orEmpty()
+        val page = pages.firstOrNull { it.name == "$formId.html" } ?: pages.singleOrNull()
+            ?: return@withContext fallback.fetchForm(formId)
+        FormDocuments.parse(page.readText(), page.nameWithoutExtension)
+    }
+}
+
+/**
+ * Sample form shipped with the app (copied from tools/forms/ at build time): `assets/forms/{formId}.html` (an ordinary HTML form,
  * parsed by [com.megathon.incidentassistant.form.HtmlFormParser]), else `{formId}.json`.
  */
 class BundledFormSource(

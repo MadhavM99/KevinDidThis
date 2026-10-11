@@ -2,6 +2,7 @@ package com.megathon.incidentassistant.form
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.json.Json
 
 /**
@@ -105,6 +106,8 @@ data class FormSchema(
     val fields: List<FormField> = emptyList(),
     @SerialName("question_groups") val questionGroups: List<QuestionGroup> = emptyList(),
     val behavior: FormBehavior = FormBehavior(),
+    /** The HTML page this form was read from (null for JSON forms): shown filled in at the end. */
+    @Transient val sourceHtml: String? = null,
 ) {
     fun field(fieldId: String): FormField? = fields.firstOrNull { it.id == fieldId }
 

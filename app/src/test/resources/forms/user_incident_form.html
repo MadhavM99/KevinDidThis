@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Incident report form</title>
+<style>
+  :root {
+    --bg: #f4f6f9; --panel: #ffffff; --ink: #14213d; --muted: #4a5568;
+    --line: #b8c1d1; --accent: #a63d00; --accent-ink: #ffffff; --focus: #0b57d0;
+    --field: #ffffff; --note: #fff3e6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f141c; --panel: #171e29; --ink: #eef2f8; --muted: #b6c0d1;
+      --line: #3a4659; --accent: #ffb27a; --accent-ink: #1a0f06; --focus: #8ab4ff;
+      --field: #0f141c; --note: #2a2018;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 1rem/1.55 "Atkinson Hyperlegible", "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  main { max-width: 56rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+  h1 { font-size: 1.75rem; line-height: 1.2; margin: 0 0 .25rem; }
+  .sub { color: var(--muted); margin: 0 0 1.5rem; max-width: 60ch; }
+  .bar { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; margin-bottom: 1.5rem; }
+  button {
+    font: inherit; font-weight: 600; min-height: 2.75rem; padding: .5rem 1.1rem;
+    border-radius: 6px; border: 2px solid var(--accent); cursor: pointer;
+    background: var(--accent); color: var(--accent-ink);
+  }
+  button.quiet { background: transparent; color: var(--ink); border-color: var(--line); }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 3px solid var(--focus); outline-offset: 2px;
+  }
+  fieldset {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    margin: 0 0 1.25rem; padding: 1rem 1.25rem 1.25rem;
+  }
+  legend { font-weight: 700; font-size: 1.1rem; padding: 0 .4rem; }
+  .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+  .full { grid-column: 1 / -1; }
+  label { display: block; font-weight: 600; margin-bottom: .25rem; }
+  .req { color: var(--accent); font-weight: 600; }
+  input, select, textarea {
+    width: 100%; font: inherit; color: var(--ink); background: var(--field);
+    border: 1.5px solid var(--line); border-radius: 6px; padding: .55rem .7rem; min-height: 2.75rem;
+  }
+  textarea { min-height: 5.5rem; resize: vertical; }
+  .note {
+    background: var(--note); border-left: 5px solid var(--accent); border-radius: 6px;
+    padding: .9rem 1.1rem; margin-bottom: 1.25rem;
+  }
+  .note h2 { font-size: 1rem; margin: 0 0 .35rem; }
+  .note p { margin: 0 0 .75rem; }
+  .note p:last-of-type { margin-bottom: .75rem; }
+  .status { min-height: 1.5rem; color: var(--muted); margin: .5rem 0 0; }
+  @media (prefers-reduced-motion: no-preference) { button { transition: filter .15s; } button:hover { filter: brightness(1.08); } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Incident report form</h1>
+  <p class="sub">A sample report with realistic random data, for testing voice-to-form tools. Required fields are marked.</p>
+
+  <div class="bar">
+    <button type="button" id="again">Generate a new random incident</button>
+    <button type="button" id="clear" class="quiet">Clear the form</button>
+  </div>
+
+  <section class="note" aria-labelledby="nar-h">
+    <h2 id="nar-h">What you would say out loud</h2>
+    <p id="narration"></p>
+    <button type="button" id="copy" class="quiet">Copy this sentence</button>
+    <p class="status" id="status" role="status"></p>
+  </section>
+
+  <form id="form" onsubmit="return false">
+    <fieldset>
+      <legend>Summary</legend>
+      <div class="grid">
+        <div><label for="id">Report ID</label><input id="id" readonly></div>
+        <div><label for="type">Incident type <span class="req">(required)</span></label><input id="type" required></div>
+        <div>
+          <label for="severity">Severity level <span class="req">(required)</span></label>
+          <select id="severity" required>
+            <option value="">Choose a level</option>
+            <option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
+          </select>
+        </div>
+        <div><label for="when">Date and time <span class="req">(required)</span></label><input id="when" type="datetime-local" required></div>
+        <div class="full"><label for="where">Incident location <span class="req">(required)</span></label><input id="where" required></div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>People and equipment</legend>
+      <div class="grid">
+        <div><label for="reporter">Reported by</label><input id="reporter"></div>
+        <div><label for="persons">Persons involved</label><input id="persons"></div>
+        <div><label for="equipment">Equipment or asset involved</label><input id="equipment"></div>
+        <div><label for="witness">Witness information</label><input id="witness"></div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>What happened</legend>
+      <div class="grid">
+        <div class="full"><label for="desc">Incident description <span class="req">(required)</span></label><textarea id="desc" required></textarea></div>
+        <div class="full"><label for="actions">Immediate actions taken</label><textarea id="actions"></textarea></div>
+        <div class="full"><label for="followup">Recommended follow-up action</label><textarea id="followup"></textarea></div>
+      </div>
+    </fieldset>
+  </form>
+</main>
+
+<script>
+  const pick = a => a[Math.floor(Math.random() * a.length)];
+  const rnd = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
+  const names = ["Priya Nair", "Daniel Okafor", "Mei Tan", "Carlos Vega", "Hannah Berg", "Arjun Rao", "Sofia Rossi", "Tom Whitley"];
+  const roles = ["maintenance technician", "security guard", "facilities supervisor", "office coordinator"];
+
+  // Each scenario builds a coherent report from one random pick of location and equipment.
+  const scenarios = [
+    { type: "Water leak", sev: ["Low", "Medium", "High"],
+      places: ["Conference Room 2", "Level 3 restrooms", "Cafeteria kitchen", "Server room corridor"],
+      gear: ["Ceiling pipe joint", "Water cooler supply line", "Dishwasher inlet hose"],
+      desc: (p, g) => `Water was found dripping from the ${g.toLowerCase()} near ${p}. About ${rnd(2, 12)} square metres of flooring got wet before it was noticed.`,
+      acts: ["Maintenance isolated the area", "Water supply shut off and wet-floor signs placed", "Area cordoned off and mopped"],
+      short: a => a.toLowerCase().includes("isolated") ? "Maintenance has already isolated the area." : a + ".",
+      next: "Replace the damaged fitting and inspect similar joints on the floor." },
+    { type: "Slip and fall", sev: ["Low", "Medium", "High"],
+      places: ["Main lobby", "Stairwell B", "Loading dock"],
+      gear: ["Wet-floor mat", "Stair handrail", "Entrance carpet"],
+      desc: (p, g) => `A visitor slipped near ${p} after the ${g.toLowerCase()} shifted on a damp floor. Minor bruising to the knee was reported.`,
+      acts: ["First aid given on site", "Area cleaned and dried", "Visitor offered a medical check"],
+      short: a => a + ".",
+      next: "Review matting at entrances and add anti-slip strips." },
+    { type: "Equipment failure", sev: ["Medium", "High", "Critical"],
+      places: ["Warehouse bay 4", "Basement plant room", "Packing line 1"],
+      gear: ["Forklift", "Backup generator", "Conveyor belt motor"],
+      desc: (p, g) => `The ${g.toLowerCase()} stopped suddenly in ${p} and could not be restarted. Work in the area was halted for ${rnd(1, 4)} hours.`,
+      acts: ["Equipment powered off and tagged out", "Operators moved to another bay", "Vendor support called"],
+      short: a => a + ".",
+      next: "Schedule a full service and add the unit to the weekly inspection list." },
+    { type: "Electrical fire alarm", sev: ["Medium", "High", "Critical"],
+      places: ["Open office, floor 5", "Print room", "Lab 3"],
+      gear: ["Overheated power strip", "Faulty extension cable", "Server rack PSU"],
+      desc: (p, g) => `Smoke and a burning smell came from an ${g.toLowerCase()} in ${p}. The fire alarm sounded and the floor was cleared.`,
+      acts: ["Power cut at the breaker", "Floor evacuated and fire marshal informed", "Small flame put out with an extinguisher"],
+      short: a => a + ".",
+      next: "Remove daisy-chained power strips and run an electrical safety check." },
+    { type: "Chemical spill", sev: ["Medium", "High"],
+      places: ["Lab 3", "Cleaning store, ground floor", "Workshop"],
+      gear: ["Solvent container", "Cleaning concentrate bottle", "Paint thinner can"],
+      desc: (p, g) => `A ${g.toLowerCase()} tipped over in ${p}, spilling roughly ${rnd(1, 4)} litres. A sharp smell spread to the corridor.`,
+      acts: ["Spill kit used and area ventilated", "Staff moved out of the room", "Hazmat lead informed"],
+      short: a => a + ".",
+      next: "Move liquids to lower shelves with drip trays and refresh spill training." }
+  ];
+
+  const $ = id => document.getElementById(id);
+  const two = n => String(n).padStart(2, "0");
+
+  function fmtLocal(d) {
+    return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}T${two(d.getHours())}:${two(d.getMinutes())}`;
+  }
+  function speakTime(d) {
+    const h = d.getHours() % 12 || 12, m = d.getMinutes();
+    return `${h}${m ? ":" + two(m) : ""} ${d.getHours() < 12 ? "AM" : "PM"}`;
+  }
+
+  function generate() {
+    const s = pick(scenarios);
+    const place = pick(s.places), gear = pick(s.gear), act = pick(s.acts);
+    const people = names.slice().sort(() => Math.random() - .5);
+    const when = new Date(Date.now() - rnd(1, 7 * 24 * 60) * 60000);
+    when.setMinutes(Math.round(when.getMinutes() / 5) * 5);
+
+    $("id").value = "INC-" + Math.random().toString(36).slice(2, 8).toUpperCase();
+    $("type").value = s.type;
+    $("severity").value = pick(s.sev);
+    $("when").value = fmtLocal(when);
+    $("where").value = place;
+    $("reporter").value = `${people[0]} (${pick(roles)})`;
+    $("persons").value = Math.random() < .4 ? "None" : people[1];
+    $("equipment").value = gear;
+    $("witness").value = `${people[2]}, ext. ${rnd(2000, 2999)}`;
+    $("desc").value = s.desc(place, gear);
+    $("actions").value = act + ".";
+    $("followup").value = s.next;
+    $("narration").textContent =
+      `There was a ${s.type.toLowerCase()} near ${place} around ${speakTime(when)}. ${s.short(act)}`;
+    $("status").textContent = "";
+  }
+
+  $("again").addEventListener("click", generate);
+  $("clear").addEventListener("click", () => {
+    document.getElementById("form").reset();
+    $("narration").textContent = "(form cleared)";
+    $("status").textContent = "Form cleared.";
+  });
+  $("copy").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText($("narration").textContent);
+      $("status").textContent = "Copied.";
+    } catch (e) {
+      $("status").textContent = "Could not copy. Select the sentence and copy it manually.";
+    }
+  });
+  generate();
+</script>
+</body>
+</html>

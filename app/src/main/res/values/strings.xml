@@ -86,6 +86,10 @@
     <string name="not_specified">not specified</string>
     <string name="confirm_report">Here is the report. %1$s Should I file it?</string>
     <string name="what_to_change">Okay. What should I change?</string>
+    <string name="form_ready">Here is your filled-in form. Check it and tap submit to send it.</string>
+    <string name="step_form">Your form</string>
+    <string name="form_submit">Submit report</string>
+    <string name="form_back">Back to review</string>
     <string name="no_change_heard">I didn\'t hear a change.</string>
     <string name="did_not_understand">Sorry, I couldn\'t work that out.</string>
     <string name="did_not_hear">I didn\'t hear anything.</string>

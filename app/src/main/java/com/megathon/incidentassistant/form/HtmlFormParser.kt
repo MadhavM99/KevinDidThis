@@ -27,11 +27,13 @@ import org.jsoup.nodes.Element
  *  - hint for the model: `placeholder` and `aria-describedby` text.
  *  - default: `value`, a `selected` option or a `checked` radio.
  *  - `autocomplete="name"` / `"email"` / `"tel"` mark the user's own details: filled from
- *    their profile instead of asked. Forms that don't mark them are classified by the model
- *    when the form loads (session/ReporterFieldClassifier).
+ *    their profile instead of asked. Forms that don't mark them are read by the model
+ *    when the form loads (session/FormInterpreter), which also words every question.
  *  - optional fields inside the same `<fieldset>` are asked together, once.
  *
- * Hidden, submit/button/reset/image and disabled controls are not part of the report.
+ * Hidden, submit/button/reset/image, disabled and readonly controls are not part of the
+ * report (readonly ones are filled by the page itself, e.g. a generated report number).
+ * Scripts are never run: only the markup counts.
  */
 object HtmlFormParser {
 
@@ -78,6 +80,7 @@ object HtmlFormParser {
             version = form.attr("data-version").ifBlank { "1.0" },
             fields = fields.map { f -> grouped[f.id]?.let { f.copy(group = it) } ?: f },
             questionGroups = questionGroups,
+            sourceHtml = html,
         )
     }
 
@@ -182,9 +185,16 @@ object HtmlFormParser {
         return set.selectFirst("> legend")?.let(::labelText)
     }
 
+    /**
+     * The label's own words: "Incident type <span>(required)</span>" → "Incident type". Markers
+     * and nested controls live in child elements; a label made only of child elements
+     * (e.g. `<label><b>Name</b></label>`) falls back to all of its text.
+     */
     private fun labelText(label: Element): String? {
+        val own = label.ownText().trim().trimEnd('*', ':').trim()
+        if (own.isNotEmpty()) return own
         val copy = label.clone()
-        copy.select("input, select, textarea, abbr[title=required], .required").remove()
+        copy.select("input, select, textarea").remove()
         return copy.text().trim().trimEnd('*', ':').trim().takeIf { it.isNotEmpty() }
     }
 
@@ -196,7 +206,7 @@ object HtmlFormParser {
     // ---------- helpers ----------
 
     private fun isReportControl(e: Element): Boolean {
-        if (e.hasAttr("disabled")) return false
+        if (e.hasAttr("disabled") || e.hasAttr("readonly")) return false
         if (e.normalName() != "input") return true
         return e.attr("type").lowercase() !in setOf("hidden", "submit", "button", "reset", "image", "file")
     }
