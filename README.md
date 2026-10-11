@@ -36,6 +36,10 @@ JSON report.
 - **Hands-free loop** — the assistant re-listens automatically after each reply; fully
   usable by voice alone, and always usable via text if speech fails.
 
+## 🎬 Demo
+
+[▶️ Watch the demo video](https://drive.google.com/file/d/1qU8hZr9KMfFzDXRDlqLKr04fjD4kICGe/view?usp=sharing)
+
 ## 🧠 AI models & external resources
 
 | Model | Purpose | Runs on | License | Link |
